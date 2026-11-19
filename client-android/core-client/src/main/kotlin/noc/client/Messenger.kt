@@ -1,8 +1,5 @@
-package noc.app.core
+package noc.client
 
-import noc.app.data.Contact
-import noc.app.data.Db
-import noc.app.net.ServerApi
 import noc.crypto.*
 import org.signal.libsignal.protocol.SignalProtocolAddress
 import java.nio.ByteBuffer
@@ -18,7 +15,7 @@ private fun ByteArray.hex() = joinToString("") { "%02x".format(it) }
 private const val MAX_FILE = 20 * 1024 * 1024
 
 /** Glue between storage, crypto and server. All calls block: run them off the main thread. */
-class Messenger(private val db: Db, val api: ServerApi) {
+class Messenger(private val db: Storage, val api: ServerApi) {
     private val rnd = SecureRandom()
     val me: LocalIdentity = LocalIdentity.loadOrCreate(db)
     val signer: SeedSigner = SeedSigner(db.get("self", "device_seed") ?: SeedSigner.newSeed().also { db.put("self", "device_seed", it) })
@@ -34,7 +31,7 @@ class Messenger(private val db: Db, val api: ServerApi) {
     @Synchronized fun sync() {
         if (db.get("self", "mailbox_created") == null) {
             try { api.createMailbox(signer, mailboxId, mailboxToken) }
-            catch (e: noc.app.net.ApiException) { if (e.code != 409) throw e }   // 409: already created by an earlier attempt
+            catch (e: ApiException) { if (e.code != 409) throw e }   // 409: already created by an earlier attempt
             db.put("self", "mailbox_created", byteArrayOf(1))
         }
         if (db.get("self", "prekeys_uploaded") == null || me.oneTimeKeys().size < 5) {

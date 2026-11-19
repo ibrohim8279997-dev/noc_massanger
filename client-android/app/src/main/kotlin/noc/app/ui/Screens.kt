@@ -34,8 +34,8 @@ import com.journeyapps.barcodescanner.ScanOptions
 import noc.app.BuildConfig
 import noc.app.MainActivity
 import noc.app.R
-import noc.app.core.InviteResult
-import noc.app.data.Msg
+import noc.client.InviteResult
+import noc.client.Msg
 import noc.crypto.Invite
 import java.io.File
 import java.text.DateFormat
@@ -94,7 +94,7 @@ private fun clock(ts: Long): String = DateFormat.getTimeInstance(DateFormat.SHOR
     val db = a.app.db ?: return
     val pal = LocalPal.current
     var query by remember { mutableStateOf("") }; var onlyUnread by remember { mutableStateOf(false) }
-    class Row(val c: noc.app.data.Contact, val last: noc.app.data.Db.Last?, val unread: Int)
+    class Row(val c: noc.client.Contact, val last: noc.client.LastMsg?, val unread: Int)
     val rows = remember(a.ui.tick) { db.contacts().map { Row(it, db.lastMessage(it.id), db.unreadCount(it.id, db.setting("read_${it.id}", "0").toLong())) } }
     val totalUnread = rows.sumOf { it.unread }
     val shown = rows.filter { (query.isBlank() || it.c.name.contains(query, true)) && (!onlyUnread || it.unread > 0) }.sortedByDescending { it.last?.ts ?: 0 }
@@ -122,8 +122,8 @@ private fun clock(ts: Long): String = DateFormat.getTimeInstance(DateFormat.SHOR
                     Avatar(r.c.name, 52); Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text(r.c.name, color = pal.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                        val l = r.last
-                        Text(when { l == null -> ""; l.text != null -> l.text; l.voice -> stringResource(R.string.voice_message); else -> l.fileName ?: stringResource(R.string.file_label) },
+                        val l = r.last; val lt = l?.text; val vm = stringResource(R.string.voice_message); val fl = stringResource(R.string.file_label)
+                        Text(when { l == null -> ""; lt != null -> lt; l.voice -> vm; else -> l.fileName ?: fl },
                             color = pal.sub, fontSize = 14.sp, maxLines = 1)
                     }
                     Column(horizontalAlignment = Alignment.End) {
@@ -241,7 +241,8 @@ private fun startRecording(ctx: android.content.Context): Pair<MediaRecorder, Fi
     val outText = if (androidx.compose.foundation.isSystemInDarkTheme()) Color.White else pal.text
     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (m.outgoing) Arrangement.End else Arrangement.Start) {
         Column(Modifier.widthIn(max = 300.dp).clip(RoundedCornerShape(18.dp)).background(if (m.outgoing) pal.out else pal.surface).padding(horizontal = 14.dp, vertical = 10.dp)) {
-            if (m.text != null) Text(m.text, color = if (m.outgoing) outText else pal.text, fontSize = 16.sp)
+            val mt = m.text
+            if (mt != null) Text(mt, color = if (m.outgoing) outText else pal.text, fontSize = 16.sp)
             else if (m.voice) Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(38.dp).clip(CircleShape).background(pal.accent).clickableNoRipple(onPlay), contentAlignment = Alignment.Center) { Ico(Ic.Play, Color.White, 22) }
                 Spacer(Modifier.width(10.dp)); Waveform(m.id, if (m.outgoing) outText.copy(alpha = 0.8f) else pal.accent)

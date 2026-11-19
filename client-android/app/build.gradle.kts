@@ -21,7 +21,7 @@ android {
 }
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
-    implementation(project(":core-crypto")) { exclude(group = "org.signal", module = "libsignal-client") }
+    implementation(project(":core-client")) { exclude(group = "org.signal", module = "libsignal-client") }
     implementation("org.signal:libsignal-android:0.86.5")
     implementation("net.zetetic:sqlcipher-android:4.6.1")
     implementation("androidx.sqlite:sqlite:2.4.0")

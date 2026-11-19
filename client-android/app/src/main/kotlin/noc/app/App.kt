@@ -1,9 +1,9 @@
 package noc.app
 
 import android.app.Application
-import noc.app.core.Messenger
+import noc.client.Messenger
 import noc.app.data.Db
-import noc.app.net.ServerApi
+import noc.client.ServerApi
 import noc.app.security.KeyVault
 import java.security.SecureRandom
 

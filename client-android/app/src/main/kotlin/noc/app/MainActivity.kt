@@ -21,8 +21,8 @@ import androidx.core.os.LocaleListCompat
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
-import noc.app.data.Contact
-import noc.app.net.ApiException
+import noc.client.Contact
+import noc.client.ApiException
 import noc.app.security.Integrity
 import noc.app.ui.*
 import noc.crypto.SeedSigner
@@ -137,7 +137,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun waitForAdmin(m: noc.app.core.Messenger) {
+    private fun waitForAdmin(m: noc.client.Messenger) {
         retry?.cancel()
         retry = lifecycleScope.launch(Dispatchers.IO) {
             while (isActive && app.unlocked) {

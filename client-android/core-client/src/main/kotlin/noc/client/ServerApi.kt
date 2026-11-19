@@ -1,4 +1,4 @@
-package noc.app.net
+package noc.client
 
 import noc.crypto.DeviceAuth
 import noc.crypto.RequestSigner

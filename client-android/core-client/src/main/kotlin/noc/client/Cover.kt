@@ -25,16 +25,18 @@ class CoverChannel(
     val paranoidPeriodMs: Long = 5_000,
     private val onUploadFailed: (ByteArray) -> Unit = {},
     private val maxTries: Int = 5,
+    asyncDelivery: Boolean = false,           // true in the app: decrypting a packet must never stall the constant rhythm
 ) {
     companion object {
         const val ENVELOPE = 16384
         const val SLOT_UP = 1 + 16 + 32 + 16 + 16 + ENVELOPE
         const val SLOT_DOWN = 1 + 16 + ENVELOPE
-        const val F_UPLOAD = 1; const val F_ACK = 2
-        const val D_HAS_PACKET = 1; const val D_UNAUTH = 2; const val D_REJECTED = 4
+        const val F_UPLOAD = 1; const val F_ACK = 2; const val F_PREKEY = 4
+        const val D_HAS_PACKET = 1; const val D_UNAUTH = 2; const val D_REJECTED = 4; const val D_PREKEY = 8; const val D_NOPREKEY = 16
     }
 
-    private class Up(val dest: ByteArray, val env: ByteArray, var tries: Int = 0)
+    private class Up(val dest: ByteArray, val env: ByteArray, var tries: Int = 0, val keyFor: ByteArray? = null, val result: java.util.concurrent.CompletableFuture<Pair<ByteArray, ByteArray?>>? = null)
+    private val deliver: java.util.concurrent.ExecutorService? = if (asyncDelivery) java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r).apply { isDaemon = true } } else null
     private val rnd = SecureRandom()
     private val queue = ArrayDeque<Up>()
     private val pendingAck = HashMap<String, ByteArray>()
@@ -44,6 +46,13 @@ class CoverChannel(
     @Volatile var slotsSent = 0; private set
 
     @Synchronized fun enqueue(dest: ByteArray, envelope: ByteArray) { require(envelope.size == ENVELOPE); queue.addLast(Up(dest, envelope)); touch() }
+    /** Asks for someone's public keys inside an ordinary slot (same size as everything else). */
+    fun requestPrekeys(owner: ByteArray): java.util.concurrent.CompletableFuture<Pair<ByteArray, ByteArray?>> {
+        val f = java.util.concurrent.CompletableFuture<Pair<ByteArray, ByteArray?>>()
+        synchronized(this) { queue.addLast(Up(ByteArray(16), ByteArray(0), keyFor = owner, result = f)); touch() }
+        return f
+    }
+
     @Synchronized fun touch() { activeUntil = clock() + activeWindowMs }
     @Synchronized fun queued() = queue.size
 
@@ -66,9 +75,13 @@ class CoverChannel(
             ackId = box?.let { pendingAck.remove(key(it.first)) }
         }
         var flags = 0
-        if (up != null) flags = flags or F_UPLOAD
+        val body = when {
+            up?.keyFor != null -> { flags = flags or F_PREKEY; up.keyFor + rb(ENVELOPE - 32) }
+            up != null -> { flags = flags or F_UPLOAD; up.env }
+            else -> rb(ENVELOPE)
+        }
         if (ackId != null) flags = flags or F_ACK
-        val slot = byteArrayOf(flags.toByte()) + (box?.first ?: rb(16)) + (box?.second ?: rb(32)) + (ackId ?: rb(16)) + (up?.dest ?: rb(16)) + (up?.env ?: rb(ENVELOPE))
+        val slot = byteArrayOf(flags.toByte()) + (box?.first ?: rb(16)) + (box?.second ?: rb(32)) + (ackId ?: rb(16)) + (up?.dest ?: rb(16)) + body
         check(slot.size == SLOT_UP)
         val resp = try { ex.exchange(slot) } catch (e: Exception) {
             synchronized(this) { up?.let { queue.addFirst(it) }; if (ackId != null && box != null) pendingAck[key(box.first)] = ackId }
@@ -77,7 +90,13 @@ class CoverChannel(
         slotsSent++
         if (resp.size != SLOT_DOWN) return false
         val df = resp[0].toInt()
-        if (up != null && df and D_REJECTED != 0) {
+        if (up?.result != null) {                                                     // answer to a key request
+            when {
+                df and D_PREKEY != 0 -> up.result.complete(unpackKeys(resp.copyOfRange(17, SLOT_DOWN)))
+                df and D_REJECTED != 0 -> up.result.completeExceptionally(ApiException(429))
+                else -> up.result.completeExceptionally(ApiException(404))
+            }
+        } else if (up != null && df and D_REJECTED != 0) {
             synchronized(this) { up.tries++; if (up.tries < maxTries) queue.addFirst(up) else onUploadFailed(up.dest) }
         }
         if (box != null && df and D_HAS_PACKET != 0 && df and D_UNAUTH == 0) {
@@ -85,11 +104,20 @@ class CoverChannel(
             if (lastDelivered[mk] != key(pid)) {
                 lastDelivered[mk] = key(pid)
                 touch()
-                try { onPacket(resp.copyOfRange(17, SLOT_DOWN)) } catch (e: Exception) { }   // undecryptable packets are dropped, never retried forever
+                val pkt = resp.copyOfRange(17, SLOT_DOWN)
+                val job = Runnable { try { onPacket(pkt) } catch (e: Exception) { } }          // undecryptable packets are dropped, never retried forever
+                if (deliver != null) deliver.execute(job) else job.run()
             }
             synchronized(this) { pendingAck[mk] = pid }
         }
         return true
+    }
+
+    private fun unpackKeys(d: ByteArray): Pair<ByteArray, ByteArray?> {
+        val b = java.nio.ByteBuffer.wrap(d)
+        val bundle = ByteArray(b.int).also { b.get(it) }
+        val otp = if (b.get().toInt() == 1) ByteArray(b.int).also { b.get(it) } else null
+        return bundle to otp
     }
 
     /** Runs until [stop] says so. Keeps the rate constant by subtracting the time a slot took. */

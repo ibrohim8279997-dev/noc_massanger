@@ -71,7 +71,7 @@
     <string name="settings_cover">Cover traffic</string>
     <string name="cover_normal">Normal</string>
     <string name="cover_paranoid">Paranoid</string>
-    <string name="cover_note">Saved now, takes effect when Tor and cover traffic arrive (stage 2).</string>
+    <string name="cover_note">Real messages travel in fixed-size packets at a constant rhythm, so nobody can tell when you talk. Normal: full rate while you use the app and 3 minutes after. Paranoid: constant all the time, about 570 MB of data per day.</string>
     <string name="settings_autodelete">Auto-delete messages</string>
     <string name="settings_autolock">Lock after leaving the app</string>
     <string name="dur_off">Off</string>
@@ -100,8 +100,23 @@
     <string name="protect_screens">Screenshot protection</string>
     <string name="protect_lock">App lock (biometrics or PIN)</string>
     <string name="protect_keys">Your keys stay only on this device</string>
-    <string name="protect_note">Network level: your server can still see your IP address until Tor arrives (stage 2).</string>
+    <string name="protect_note">Direct connection: your server sees your IP address. Use a server address ending in .onion for Tor.</string>
     <string name="profile_id">Device ID</string>
     <string name="about">About</string>
     <string name="version">Version %1$s</string>
+    <string name="tor_connecting">Tor: connecting… %1$d%%</string>
+    <string name="tor_ready">Tor: connected</string>
+    <string name="tor_failed">Tor could not connect. Check the network or add bridges in Settings. Nothing is sent without Tor.</string>
+    <string name="tor_bridges">Bridges (one per line)</string>
+    <string name="tor_bridges_hint">obfs4 or Snowflake bridge lines. Used automatically only if plain Tor cannot connect.</string>
+    <string name="net_direct">Direct connection, no Tor. Use a server address ending in .onion to route everything through Tor.</string>
+    <string name="net_tor">Everything goes through Tor only.</string>
+    <string name="rotate_now">Change my mailbox now</string>
+    <string name="rotate_done">Mailbox changed. Contacts are notified; it also changes by itself every week.</string>
+    <string name="group_new">New group</string>
+    <string name="group_name">Group name</string>
+    <string name="group_pick">Choose members (everyone must already be your contact)</string>
+    <string name="group_create">Create</string>
+    <string name="protect_tor">Traffic only through Tor</string>
+    <string name="protect_cover">Constant-rate cover traffic</string>
 </resources>

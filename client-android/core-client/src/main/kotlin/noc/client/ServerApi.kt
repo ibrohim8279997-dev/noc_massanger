@@ -15,7 +15,9 @@ class ApiException(val code: Int) : IOException("HTTP $code")
 class Packet(val id: String, val data: ByteArray)
 
 /** Talks to the server described in protocol/server-api-v1.md. Never logs. */
-class ServerApi(private val base: String, private val http: OkHttpClient = Transport.direct()) : Exchanger {
+/** [http] has NO default on purpose: the caller must choose Tor or direct. An .onion address is refused without a Tor client. */
+class ServerApi(private val base: String, private val http: OkHttpClient) : Exchanger {
+    init { require(!Transport.isOnion(base) || Transport.isTor(http)) { "an .onion server needs the Tor transport" } }
     private val rnd = SecureRandom()
     private val enc = java.util.Base64.getUrlEncoder().withoutPadding()
     private val dec = java.util.Base64.getUrlDecoder()

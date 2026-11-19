@@ -19,6 +19,10 @@ object Transport {
         override fun lookup(hostname: String): List<InetAddress> = throw IOException("local DNS lookup is forbidden in Tor mode")
     }
 
+    private val torClients = java.util.Collections.newSetFromMap(java.util.WeakHashMap<OkHttpClient, Boolean>())
+    fun isTor(c: OkHttpClient) = torClients.contains(c)
+    fun isOnion(url: String) = url.substringAfter("://").substringBefore("/").substringBefore(":").endsWith(".onion")
+
     fun direct(): OkHttpClient = base().build()
 
     fun tor(socksHost: String = "127.0.0.1", socksPort: Int = 9050): OkHttpClient = base()
@@ -29,7 +33,7 @@ object Transport {
             override fun connectFailed(uri: java.net.URI?, sa: java.net.SocketAddress?, ioe: IOException?) {}
         })
         .retryOnConnectionFailure(false)
-        .build()
+        .build().also { torClients.add(it) }
 
     private fun base() = OkHttpClient.Builder().connectTimeout(Duration.ofSeconds(45)).readTimeout(Duration.ofSeconds(60))
 }

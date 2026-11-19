@@ -78,7 +78,7 @@ class ServerProc private constructor(val baseUrl: String, val bindToken: String,
 }
 
 /** One simulated phone. */
-class Phone(val base: String, val storage: MemoryStorage = MemoryStorage(), makeApi: (String) -> ServerApi = { ServerApi(it) }) {
+class Phone(val base: String, val storage: MemoryStorage = MemoryStorage(), makeApi: (String) -> ServerApi = { ServerApi(it, Transport.direct()) }) {
     private val mk = makeApi
     var m = Messenger(storage, mk(base))
     /** "Restart the app": same storage, new objects. */
@@ -94,7 +94,7 @@ fun waitFor(ms: Long = 5000, cond: () -> Boolean) {
 /** admin binds, then registers the given phones as users */
 fun setupAdmin(server: ServerProc, vararg phones: Phone): SeedSigner {
     val admin = SeedSigner(SeedSigner.newSeed())
-    val api = ServerApi(server.baseUrl)
+    val api = ServerApi(server.baseUrl, Transport.direct())
     api.bindSuperadmin(server.bindToken, admin.publicKey)
     phones.forEach { api.addUser(admin, it.key) }
     return admin

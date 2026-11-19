@@ -15,4 +15,4 @@ if [ ! -f "$NOC_DB_PATH" ]; then
   echo
 fi
 # the key is typed into the server's own prompt and never written to disk
-exec tmux new-session -s noc "python -m app.cli serve --host 0.0.0.0 --port 8443; echo 'server stopped, press Enter'; read"
+exec tmux new-session -s noc "python -m app.cli serve --host ${NOC_HOST:-0.0.0.0} --port 8443; echo 'server stopped, press Enter'; read"

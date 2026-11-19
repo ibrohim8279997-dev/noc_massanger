@@ -3,6 +3,8 @@
 set -e
 cd "$(dirname "$0")/.."
 export NOC_DB_PATH="$HOME/noc-data/noc.db"
+# behind Tor: start with NOC_HOST=127.0.0.1 so that the onion service is the only way in
+export NOC_HOST="${NOC_HOST:-0.0.0.0}"
 if tmux has-session -t noc 2>/dev/null; then
   echo "Server session already running. Attaching (detach with Ctrl-b then d)."
   exec tmux attach -t noc
@@ -13,4 +15,4 @@ if [ ! -f "$NOC_DB_PATH" ]; then
   echo
 fi
 # the key is typed into the server's own prompt and never written to disk
-exec tmux new-session -s noc "NOC_DB_PATH='$NOC_DB_PATH' .venv/bin/python -m app.cli serve --host 0.0.0.0 --port 8443; echo 'server stopped, press Enter'; read"
+exec tmux new-session -s noc "NOC_HOST='$NOC_HOST' NOC_DB_PATH='$NOC_DB_PATH' .venv/bin/python -m app.cli serve --host ${NOC_HOST:-0.0.0.0} --port 8443; echo 'server stopped, press Enter'; read"

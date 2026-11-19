@@ -32,7 +32,7 @@ import com.google.zxing.qrcode.QRCodeWriter
 sealed class Screen {
     object Lock : Screen(); class Problem(val key: String) : Screen(); object Setup : Screen()
     object Chats : Screen(); object Contacts : Screen(); object Protect : Screen(); object Settings : Screen()
-    class Chat(val id: Long) : Screen(); object Meet : Screen(); object Admin : Screen(); class Safety(val id: Long) : Screen()
+    class Chat(val id: Long) : Screen(); object Meet : Screen(); object GroupNew : Screen(); object Admin : Screen(); class Safety(val id: Long) : Screen()
 }
 
 class UiState {
@@ -40,6 +40,7 @@ class UiState {
     var tick by mutableIntStateOf(0)
     var error by mutableStateOf<String?>(null)
     var registered by mutableStateOf(true)
+    var torText by mutableStateOf<String?>(null)
 }
 
 // ---------------------------------------------------------------- palette (dark navy + blue accent, as in the design)

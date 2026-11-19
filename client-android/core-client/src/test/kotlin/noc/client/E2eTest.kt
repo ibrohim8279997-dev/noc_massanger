@@ -49,7 +49,7 @@ class E2eTest {
         assertEquals(401, e.code)
         late.restart()                                         // app closed and reopened while waiting
         assertEquals(401, assertFailsWith<ApiException> { late.m.sync() }.code)
-        ServerApi(s.baseUrl).addUser(adm, late.key)            // administrator scans the card
+        ServerApi(s.baseUrl, Transport.direct()).addUser(adm, late.key)            // administrator scans the card
         late.m.sync()                                          // the loop does this every cycle
         late.restart(); late.m.sync()                          // and it survives another restart
         meet(admin, "Late", late, "Admin")
@@ -76,7 +76,7 @@ class E2eTest {
 
     @Test fun removed_user_is_cut_off_from_the_server_but_can_still_write_until_mailboxes_are_rotated() {
         val (a, b, adm) = fresh(); meet(a, "Bob", b, "Alice")
-        ServerApi(b.base).removeUser(adm, b.key)
+        ServerApi(b.base, Transport.direct()).removeUser(adm, b.key)
         // registration-type actions need an identity: gone
         assertEquals(401, assertFailsWith<ApiException> { b.m.rotateMailbox() }.code)
         // nobody can start talking to bob: his keys and mailbox were deleted with him
@@ -125,7 +125,7 @@ class Stage2E2eTest {
         // sending must work with a client that has no signer registered at all for sending: use a bare ServerApi
         val (s, ph) = world(2); val (a, b) = ph
         meet(a, "Bob", b, "Alice")
-        val api = ServerApi(s.baseUrl)
+        val api = ServerApi(s.baseUrl, Transport.direct())
         val bobBox = b.storage.contacts().single().mailboxId
         api.putPacket(bobBox, ByteArray(CoverChannel.ENVELOPE))        // no key, no signature: accepted
         assertEquals(0, b.m.poll())                                     // garbage envelope is dropped, not an error
@@ -163,7 +163,7 @@ class Stage2E2eTest {
         assertTrue(delays.toSet().size > 1)                                   // not a fixed delay
         // each member's envelope is different bytes (separately encrypted)
         val boxes = listOf(b, c).map { it.storage.contacts().single().let { _ -> it.m.mailboxId } }
-        val seen = boxes.map { mb -> ServerApi(b.base).fetch(mb, if (mb.contentEquals(b.m.mailboxId)) tokenOf(b) else tokenOf(c)).map { it.data.toList() } }
+        val seen = boxes.map { mb -> ServerApi(b.base, Transport.direct()).fetch(mb, if (mb.contentEquals(b.m.mailboxId)) tokenOf(b) else tokenOf(c)).map { it.data.toList() } }
         assertTrue((seen[0] + seen[1]).toSet().size == (seen[0] + seen[1]).size)
     }
 
@@ -184,7 +184,7 @@ class Stage2E2eTest {
         b.m.sendText(b.storage.contact(alice.id)!!, "после"); assertEquals(1, a.m.poll())
         // after the grace period the old box is gone from the server
         a.m.finishRotation(System.currentTimeMillis() + 120_000)
-        assertEquals(404, assertFailsWith<ApiException> { ServerApi(s.baseUrl).fetch(oldBox, oldTok) }.code)
+        assertEquals(404, assertFailsWith<ApiException> { ServerApi(s.baseUrl, Transport.direct()).fetch(oldBox, oldTok) }.code)
         // and a bogus update from someone else cannot change a contact's mailbox (it must come through the session)
         assertEquals(listOf("до обновления", "после"), a.storage.messages(bob.id).filter { !it.outgoing }.map { it.text })
     }

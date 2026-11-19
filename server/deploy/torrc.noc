@@ -1,0 +1,13 @@
+# Tor configuration for the NOC server: the ONLY way in is an onion service.
+# The server itself listens on 127.0.0.1 only (see linux-run.sh: --host 127.0.0.1).
+DataDirectory /var/lib/tor
+Log notice file /var/log/tor/notices.log
+SocksPort 0                      # the server makes no outgoing connections through Tor itself here
+ControlPort 0
+HiddenServiceDir /var/lib/tor/noc_service
+HiddenServiceVersion 3
+HiddenServicePort 80 127.0.0.1:8443
+# an onion service that cannot be abused for enumeration / DoS amplification
+HiddenServiceEnableIntroDoSDefense 1
+HiddenServiceMaxStreams 200
+HiddenServiceMaxStreamsCloseCircuit 1

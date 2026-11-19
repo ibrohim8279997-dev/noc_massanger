@@ -52,6 +52,13 @@ def test_real_server_output_has_no_ip_keys_or_tokens(tmp_path):
         pp = f"/v1/mailboxes/{mid}/packets"
         assert httpx.post(base + pp, content=envelope(), headers=user.headers("POST", pp, envelope())).status_code == 201
         httpx.get(base + pp, headers={"x-mailbox-token": tok})
+        # stage 2 endpoints: anonymous send, anonymous prekeys, constant-size exchange
+        httpx.post(base + pp, content=envelope())
+        httpx.get(base + f"/v1/prekeys/{user.pub_s}")
+        import base64
+        raw = lambda x: base64.urlsafe_b64decode(x + "=" * (-len(x) % 4))
+        slot = bytes([3]) + raw(mid) + raw(tok) + os.urandom(16) + raw(mid) + os.urandom(16384)
+        assert len(httpx.post(base + "/v1/exchange", content=slot).content) == 1 + 16 + 16384
     finally:
         p.terminate()
         out = buf + p.communicate(timeout=10)[0]

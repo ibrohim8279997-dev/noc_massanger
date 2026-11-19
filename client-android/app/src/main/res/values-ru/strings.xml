@@ -71,7 +71,7 @@
     <string name="settings_cover">Маскирующий трафик</string>
     <string name="cover_normal">Обычный</string>
     <string name="cover_paranoid">Параноидальный</string>
-    <string name="cover_note">Сохраняется сейчас, заработает вместе с Tor и маскирующим трафиком (этап 2).</string>
+    <string name="cover_note">Настоящие сообщения идут пакетами одного размера в постоянном ритме, поэтому не видно, когда вы общаетесь. Обычный: полная скорость, пока вы пользуетесь приложением, и 3 минуты после. Параноидальный: постоянно, около 570 МБ данных в сутки.</string>
     <string name="settings_autodelete">Автоудаление сообщений</string>
     <string name="settings_autolock">Блокировка после выхода из приложения</string>
     <string name="dur_off">Выкл.</string>
@@ -100,8 +100,23 @@
     <string name="protect_screens">Защита от скриншотов</string>
     <string name="protect_lock">Блокировка приложения (биометрия или PIN)</string>
     <string name="protect_keys">Ваши ключи хранятся только на этом устройстве</string>
-    <string name="protect_note">На уровне сети сервер пока видит ваш IP-адрес: это закроет Tor (этап 2).</string>
+    <string name="protect_note">Прямое соединение: ваш сервер видит ваш IP-адрес. Адрес сервера с окончанием .onion включит Tor.</string>
     <string name="profile_id">ID устройства</string>
     <string name="about">О приложении</string>
     <string name="version">Версия %1$s</string>
+    <string name="tor_connecting">Tor: подключение… %1$d%%</string>
+    <string name="tor_ready">Tor: подключено</string>
+    <string name="tor_failed">Tor не смог подключиться. Проверьте сеть или добавьте мосты в настройках. Без Tor ничего не отправляется.</string>
+    <string name="tor_bridges">Мосты (по одному в строке)</string>
+    <string name="tor_bridges_hint">Строки мостов obfs4 или Snowflake. Используются автоматически, только если обычный Tor не подключился.</string>
+    <string name="net_direct">Прямое соединение, без Tor. Адрес сервера с окончанием .onion направит весь трафик через Tor.</string>
+    <string name="net_tor">Весь трафик идёт только через Tor.</string>
+    <string name="rotate_now">Сменить мой ящик сейчас</string>
+    <string name="rotate_done">Ящик сменён. Контакты уведомлены; он также меняется сам раз в неделю.</string>
+    <string name="group_new">Новая группа</string>
+    <string name="group_name">Название группы</string>
+    <string name="group_pick">Выберите участников (все должны быть вашими контактами)</string>
+    <string name="group_create">Создать</string>
+    <string name="protect_tor">Трафик только через Tor</string>
+    <string name="protect_cover">Маскирующий трафик с постоянной скоростью</string>
 </resources>

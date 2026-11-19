@@ -62,4 +62,10 @@ class TransportTest {
             assertEquals(listOf("no-such-host.invalid"), p.requestedHosts)          // .invalid would fail any local lookup; the proxy got the raw name
         }
     }
+
+    @Test fun an_onion_server_cannot_be_used_without_the_tor_transport() {
+        assertFailsWith<IllegalArgumentException> { ServerApi("http://abcdefghijklmnop234567abcdefghijklmnop234567abcdefghijklmnopq.onion", Transport.direct()) }
+        ServerApi("http://abcdefghijklmnop234567abcdefghijklmnop234567abcdefghijklmnopq.onion", Transport.tor("127.0.0.1", 9))
+        ServerApi("http://127.0.0.1:1", Transport.direct())                          // LAN/testing servers are fine direct
+    }
 }

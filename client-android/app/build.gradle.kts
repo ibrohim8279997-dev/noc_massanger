@@ -3,6 +3,14 @@ plugins {
     kotlin("android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+// Tor + pluggable transports (obfs4, Snowflake) as native executables from Maven Central (Briar Project builds)
+val torLibs by configurations.creating
+val unpackTor = tasks.register<Copy>("unpackTor") {
+    from(provider { torLibs.resolve().map { zipTree(it) } }) { include("arm64-v8a/*.so") }
+    into(layout.buildDirectory.dir("generated/torJni"))
+}
+tasks.configureEach { if (name.startsWith("merge") && name.endsWith("JniLibFolders")) dependsOn(unpackTor) }
+
 android {
     namespace = "noc.app"
     compileSdk = 35
@@ -15,11 +23,15 @@ android {
     buildTypes { release { isMinifyEnabled = false; signingConfig = signingConfigs.getByName("debug") } }
     compileOptions { isCoreLibraryDesugaringEnabled = true; sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
+    sourceSets["main"].jniLibs.srcDir(layout.buildDirectory.dir("generated/torJni"))
     buildFeatures { compose = true; buildConfig = true }
     packaging { jniLibs.useLegacyPackaging = true; jniLibs.excludes += "**/libsignal_jni_testing.so"
         resources.excludes += listOf("libsignal_jni*", "signal_jni*", "**/*.dylib", "**/*.dll") }
 }
 dependencies {
+    torLibs("org.briarproject:tor-android:0.4.9.15")
+    torLibs("org.briarproject:obfs4proxy-android:0.0.14-tor2")
+    torLibs("org.briarproject:snowflake-android:2.9.1")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
     implementation(project(":core-client")) { exclude(group = "org.signal", module = "libsignal-client") }
     implementation("org.signal:libsignal-android:0.86.5")

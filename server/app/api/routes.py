@@ -8,7 +8,8 @@ from pydantic import BaseModel, Field
 
 from ..auth import authenticate
 import os
-from ..config import ENVELOPE_SIZE, SLOT_UP, SLOT_DOWN, F_UPLOAD, F_ACK, D_HAS_PACKET, D_UNAUTH, D_REJECTED
+import struct
+from ..config import ENVELOPE_SIZE, SLOT_UP, SLOT_DOWN, F_UPLOAD, F_ACK, F_PREKEY, D_HAS_PACKET, D_UNAUTH, D_REJECTED, D_PREKEY, D_NOPREKEY
 from ..limits.validation import b64d, b64d_max, b64e
 
 log = logging.getLogger("noc")
@@ -219,13 +220,27 @@ async def exchange(request: Request):
     if st.store.check_token(recv, token):
         if flags & F_ACK:
             st.store.ack_packet(recv, ackid)
-        got = st.store.list_packets(recv, 1)
+        got = [] if flags & F_PREKEY else st.store.list_packets(recv, 1)
         if got:
             down |= D_HAS_PACKET
             pid, data = got[0]
     else:
         down |= D_UNAUTH
-    if flags & F_UPLOAD:
+    if flags & F_PREKEY:
+        # key request travels inside the same fixed-size slot, so it is invisible among ordinary traffic
+        owner = env[:32]
+        if not st.prekey_limit.allow(owner):
+            down |= D_REJECTED
+        else:
+            r = st.store.take_prekeys(owner)
+            if r is None:
+                down |= D_NOPREKEY
+            else:
+                bundle, otp = r
+                packed = struct.pack(">I", len(bundle)) + bundle + (b"\x01" + struct.pack(">I", len(otp)) + otp if otp else b"\x00")
+                data = packed + os.urandom(ENVELOPE_SIZE - len(packed))
+                down |= D_PREKEY
+    elif flags & F_UPLOAD:
         if st.put_limit.allow(dest) and st.store.put_packet(dest, env, st.settings.packet_ttl_s, st.settings.mailbox_max_packets) is not None:
             st.notifier.notify(dest)
         else:

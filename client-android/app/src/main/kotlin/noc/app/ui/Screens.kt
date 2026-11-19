@@ -94,16 +94,20 @@ private fun clock(ts: Long): String = DateFormat.getTimeInstance(DateFormat.SHOR
     val db = a.app.db ?: return
     val pal = LocalPal.current
     var query by remember { mutableStateOf("") }; var onlyUnread by remember { mutableStateOf(false) }
-    class Row(val c: noc.client.Contact, val last: noc.client.LastMsg?, val unread: Int)
-    val rows = remember(a.ui.tick) { db.contacts().map { Row(it, db.lastMessage(it.id), db.unreadCount(it.id, db.setting("read_${it.id}", "0").toLong())) } }
+    class Row(val id: Long, val name: String, val last: noc.client.LastMsg?, val unread: Int)
+    val rows = remember(a.ui.tick) {
+        db.contacts().map { Row(it.id, it.name, db.lastMessage(it.id), db.unreadCount(it.id, db.setting("read_${it.id}", "0").toLong())) } +
+        db.groups().map { Row(-it.id, it.name, db.lastMessage(-it.id), db.unreadCount(-it.id, db.setting("read_${-it.id}", "0").toLong())) }
+    }
     val totalUnread = rows.sumOf { it.unread }
-    val shown = rows.filter { (query.isBlank() || it.c.name.contains(query, true)) && (!onlyUnread || it.unread > 0) }.sortedByDescending { it.last?.ts ?: 0 }
+    val shown = rows.filter { (query.isBlank() || it.name.contains(query, true)) && (!onlyUnread || it.unread > 0) }.sortedByDescending { it.last?.ts ?: 0 }
     Tabbed(Screen.Chats, { a.ui.screen = it }) {
         Column(Modifier.systemBarsPadding().padding(horizontal = 16.dp).weight(1f)) {
             Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("NOCTRA", color = pal.text, fontSize = 22.sp, fontWeight = FontWeight.Medium, letterSpacing = 2.sp, modifier = Modifier.weight(1f))
                 Ico(Ic.Shield, pal.accent, 26, Modifier.clickableNoRipple { a.ui.screen = Screen.Protect })
             }
+            a.ui.torText?.let { Text(it, color = pal.sub, fontSize = 12.sp, modifier = Modifier.padding(bottom = 6.dp)) }
             SearchBox(query) { query = it }
             Spacer(Modifier.height(10.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -118,10 +122,10 @@ private fun clock(ts: Long): String = DateFormat.getTimeInstance(DateFormat.SHOR
             }
             if (rows.isEmpty()) Text(stringResource(R.string.chats_empty), color = pal.sub, modifier = Modifier.padding(top = 24.dp))
             LazyColumn(Modifier.weight(1f).padding(top = 8.dp)) { items(shown) { r ->
-                Row(Modifier.fillMaxWidth().clickableNoRipple { a.ui.screen = Screen.Chat(r.c.id) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Avatar(r.c.name, 52); Spacer(Modifier.width(12.dp))
+                Row(Modifier.fillMaxWidth().clickableNoRipple { a.ui.screen = Screen.Chat(r.id) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Avatar(r.name, 52); Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(r.c.name, color = pal.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                        Text(r.name, color = pal.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
                         val l = r.last; val lt = l?.text; val vm = stringResource(R.string.voice_message); val fl = stringResource(R.string.file_label)
                         Text(when { l == null -> ""; lt != null -> lt; l.voice -> vm; else -> l.fileName ?: fl },
                             color = pal.sub, fontSize = 14.sp, maxLines = 1)
@@ -160,6 +164,7 @@ private fun clock(ts: Long): String = DateFormat.getTimeInstance(DateFormat.SHOR
             Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(stringResource(R.string.nav_contacts), color = pal.text, fontSize = 22.sp, fontWeight = FontWeight.SemiBold) }
             PrimaryButton(stringResource(R.string.add_contact), { a.ui.screen = Screen.Meet })
+            if (contacts.isNotEmpty()) { Spacer(Modifier.height(8.dp)); SecondaryButton(stringResource(R.string.group_new), { a.ui.screen = Screen.GroupNew }) }
             if (a.app.vault.has("admin")) { Spacer(Modifier.height(8.dp)); SecondaryButton(stringResource(R.string.add_user), { a.ui.screen = Screen.Admin }) }
             Spacer(Modifier.height(8.dp))
             if (contacts.isEmpty()) Text(stringResource(R.string.chats_empty), color = pal.sub, modifier = Modifier.padding(top = 16.dp))
@@ -179,13 +184,17 @@ private fun clock(ts: Long): String = DateFormat.getTimeInstance(DateFormat.SHOR
 @Composable fun ChatScreen(a: MainActivity, id: Long) {
     val db = a.app.db ?: return
     val pal = LocalPal.current
-    val contact = remember(id) { db.contact(id) } ?: return
+    val contact = remember(id) { if (id > 0) db.contact(id) else null }
+    val group = remember(id) { if (id < 0) db.group(-id) else null }
+    if (contact == null && group == null) return
+    val title = contact?.name ?: group!!.name
+    val names = remember(a.ui.tick) { db.contacts().associate { it.id to it.name } }
     val msgs by produceState(emptyList<Msg>(), a.ui.tick, id) { value = db.messages(id) }
     LaunchedEffect(id, a.ui.tick) { db.setSetting("read_$id", System.currentTimeMillis().toString()) }
     var text by remember { mutableStateOf("") }
     var recorder by remember { mutableStateOf<Pair<MediaRecorder, File>?>(null) }
     val ctx = androidx.compose.ui.platform.LocalContext.current
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri -> if (uri != null) a.sendPicked(contact, uri) }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri -> if (uri != null && contact != null) a.sendPicked(contact, uri) }
     val saveName = remember { mutableStateOf<Long?>(null) }
     val saver = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri -> val s = saveName.value; if (uri != null && s != null) a.saveFile(s, uri) }
     val mic = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok -> if (ok) recorder = startRecording(ctx) }
@@ -195,21 +204,21 @@ private fun clock(ts: Long): String = DateFormat.getTimeInstance(DateFormat.SHOR
     Column(Modifier.fillMaxSize().systemBarsPadding().imePadding()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp).height(60.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.clickableNoRipple { a.ui.screen = Screen.Chats }.padding(end = 10.dp, top = 8.dp, bottom = 8.dp)) { Ico(Ic.Back, pal.text) }
-            Avatar(contact.name, 40); Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f).clickableNoRipple { a.ui.screen = Screen.Safety(id) }) {
-                Text(contact.name, color = pal.text, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                Text(stringResource(R.string.safety_number), color = pal.accent, fontSize = 12.sp)
+            Avatar(title, 40); Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f).clickableNoRipple { if (contact != null) a.ui.screen = Screen.Safety(id) }) {
+                Text(title, color = pal.text, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                if (contact != null) Text(stringResource(R.string.safety_number), color = pal.accent, fontSize = 12.sp)
             }
         }
         Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
             Ico(Ic.Lock, pal.sub, 14); Spacer(Modifier.width(6.dp)); Text(stringResource(R.string.enc_active), color = pal.sub, fontSize = 12.sp)
         }
         LazyColumn(Modifier.weight(1f).padding(horizontal = 12.dp), state = listState, verticalArrangement = Arrangement.spacedBy(8.dp)) { items(msgs) { m ->
-            Bubble(m, onSave = { saveName.value = m.id; saver.launch(m.fileName ?: "file") }, onPlay = { a.playVoice(m.id) })
+            Bubble(m, sender = if (group != null && !m.outgoing) names[m.senderId] else null, onSave = { saveName.value = m.id; saver.launch(m.fileName ?: "file") }, onPlay = { a.playVoice(m.id) })
         } }
         ErrorLine(a)
         Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.clickableNoRipple { picker.launch("*/*") }.padding(8.dp)) { Ico(Ic.Clip, pal.sub) }
+            if (contact != null) Box(Modifier.clickableNoRipple { picker.launch("*/*") }.padding(8.dp)) { Ico(Ic.Clip, pal.sub) }
             Box(Modifier.weight(1f).clip(RoundedCornerShape(24.dp)).background(pal.surface).padding(horizontal = 16.dp, vertical = 12.dp)) {
                 if (text.isEmpty()) Text(stringResource(R.string.chat_hint), color = pal.sub)
                 BasicTextField(text, { text = it }, textStyle = TextStyle(color = pal.text, fontSize = 16.sp), cursorBrush = SolidColor(pal.accent), modifier = Modifier.fillMaxWidth(), maxLines = 5)
@@ -218,7 +227,8 @@ private fun clock(ts: Long): String = DateFormat.getTimeInstance(DateFormat.SHOR
             val rec = recorder != null
             Box(Modifier.size(46.dp).clip(CircleShape).background(if (rec) pal.bad else pal.accent).clickableNoRipple {
                 when {
-                    text.isNotBlank() -> { a.sendText(contact, text); text = "" }
+                    text.isNotBlank() -> { if (contact != null) a.sendText(contact, text) else a.sendGroupText(group!!, text); text = "" }
+                    contact == null -> {}
                     rec -> { val r = recorder!!; recorder = null; a.sendRecording(contact, r.first, r.second) }
                     else -> mic.launch(Manifest.permission.RECORD_AUDIO)
                 }
@@ -236,11 +246,12 @@ private fun startRecording(ctx: android.content.Context): Pair<MediaRecorder, Fi
     return r to f
 }
 
-@Composable private fun Bubble(m: Msg, onSave: () -> Unit, onPlay: () -> Unit) {
+@Composable private fun Bubble(m: Msg, sender: String?, onSave: () -> Unit, onPlay: () -> Unit) {
     val pal = LocalPal.current
     val outText = if (androidx.compose.foundation.isSystemInDarkTheme()) Color.White else pal.text
     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (m.outgoing) Arrangement.End else Arrangement.Start) {
         Column(Modifier.widthIn(max = 300.dp).clip(RoundedCornerShape(18.dp)).background(if (m.outgoing) pal.out else pal.surface).padding(horizontal = 14.dp, vertical = 10.dp)) {
+            if (sender != null) Text(sender, color = pal.accent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
             val mt = m.text
             if (mt != null) Text(mt, color = if (m.outgoing) outText else pal.text, fontSize = 16.sp)
             else if (m.voice) Row(verticalAlignment = Alignment.CenterVertically) {
@@ -306,7 +317,8 @@ private fun startRecording(ctx: android.content.Context): Pair<MediaRecorder, Fi
     val db = a.app.db ?: return
     val pal = LocalPal.current
     val disappearOn = (db.setting("autodelete_s", "0").toIntOrNull() ?: 0) > 0
-    val items = listOf(R.string.protect_e2e to true, R.string.protect_disappear to disappearOn, R.string.protect_screens to true, R.string.protect_lock to true)
+    val items = listOf(R.string.protect_e2e to true, R.string.protect_disappear to disappearOn, R.string.protect_screens to true, R.string.protect_lock to true,
+        R.string.protect_tor to a.app.viaTor, R.string.protect_cover to true)
     val active = items.count { it.second }
     Tabbed(Screen.Protect, { a.ui.screen = it }) {
         Column(Modifier.systemBarsPadding().padding(horizontal = 16.dp).weight(1f)) {
@@ -329,14 +341,14 @@ private fun startRecording(ctx: android.content.Context): Pair<MediaRecorder, Fi
                     fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
                 Card { items.forEach { (label, on) ->
                     Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Ico(when (label) { R.string.protect_disappear -> Ic.Clock; R.string.protect_screens -> Ic.Shield; else -> Ic.Lock }, pal.text, 22)
+                        Ico(when (label) { R.string.protect_disappear -> Ic.Clock; R.string.protect_screens, R.string.protect_tor, R.string.protect_cover -> Ic.Shield; else -> Ic.Lock }, pal.text, 22)
                         Spacer(Modifier.width(12.dp)); Text(stringResource(label), color = pal.text, modifier = Modifier.weight(1f))
                         Box(Modifier.size(22.dp).clip(CircleShape).background(if (on) pal.accent else pal.line), contentAlignment = Alignment.Center) { if (on) Ico(Ic.Check, Color.White, 14) }
                     }
                 } }
                 Card { Row(verticalAlignment = Alignment.CenterVertically) { Ico(Ic.Shield, pal.accent, 28); Spacer(Modifier.width(12.dp))
                     Text(stringResource(R.string.protect_keys), color = pal.text, fontWeight = FontWeight.SemiBold) } }
-                Text(stringResource(R.string.protect_note), color = pal.sub, fontSize = 12.sp)
+                if (!a.app.viaTor) Text(stringResource(R.string.protect_note), color = pal.sub, fontSize = 12.sp)
             }
         }
     }
@@ -383,6 +395,15 @@ private fun startRecording(ctx: android.content.Context): Pair<MediaRecorder, Fi
                 Card {
                     choices(R.string.settings_cover, listOf("normal" to R.string.cover_normal, "paranoid" to R.string.cover_paranoid), cover) { cover = it; db.setSetting("cover", it) }
                     Text(stringResource(R.string.cover_note), color = pal.sub, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
+                    Text(stringResource(if (a.app.viaTor) R.string.net_tor else R.string.net_direct), color = pal.text, modifier = Modifier.padding(top = 12.dp))
+                    var bridges by remember { mutableStateOf(db.setting("bridges", "")) }
+                    OutlinedTextField(bridges, { bridges = it; db.setSetting("bridges", it) }, Modifier.fillMaxWidth().padding(top = 8.dp),
+                        label = { Text(stringResource(R.string.tor_bridges)) }, minLines = 2, shape = RoundedCornerShape(14.dp))
+                    Text(stringResource(R.string.tor_bridges_hint), color = pal.sub, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+                    var rotated by remember { mutableStateOf(false) }
+                    Spacer(Modifier.height(10.dp))
+                    SecondaryButton(stringResource(R.string.rotate_now), { a.rotateNow { rotated = true } })
+                    if (rotated) Text(stringResource(R.string.rotate_done), color = pal.ok, fontSize = 13.sp)
                 }
                 if (a.app.vault.has("admin")) { section(R.string.section_admin); SecondaryButton(stringResource(R.string.admin_open), { a.ui.screen = Screen.Admin }) }
                 SecondaryButton(stringResource(R.string.settings_wipe), { wipe = true })
@@ -416,6 +437,25 @@ private fun startRecording(ctx: android.content.Context): Pair<MediaRecorder, Fi
                 if (role != "superadmin") TextButton(onClick = { a.withAdmin { s -> a.app.messenger!!.api.removeUser(s, k); users = a.app.messenger!!.api.listUsers(s) } }) { Text(stringResource(R.string.admin_remove), color = pal.bad) }
             } }
         }
+        ErrorLine(a)
+    } }
+}
+
+@Composable fun GroupNewScreen(a: MainActivity) {
+    val db = a.app.db ?: return
+    val pal = LocalPal.current
+    val contacts = remember { db.contacts() }
+    var name by remember { mutableStateOf("") }; val picked = remember { mutableStateListOf<Long>() }
+    Page(stringResource(R.string.group_new), onBack = { a.ui.screen = Screen.Contacts }) { Scrolling {
+        Field(name, { name = it }, stringResource(R.string.group_name))
+        Text(stringResource(R.string.group_pick), color = pal.sub)
+        contacts.forEach { c ->
+            Row(Modifier.fillMaxWidth().clickableNoRipple { if (c.id in picked) picked.remove(c.id) else picked.add(c.id) }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Avatar(c.name, 40); Spacer(Modifier.width(12.dp)); Text(c.name, color = pal.text, modifier = Modifier.weight(1f))
+                Box(Modifier.size(24.dp).clip(CircleShape).background(if (c.id in picked) pal.accent else pal.line), contentAlignment = Alignment.Center) { if (c.id in picked) Ico(Ic.Check, Color.White, 16) }
+            }
+        }
+        PrimaryButton(stringResource(R.string.group_create), { if (name.isNotBlank() && picked.isNotEmpty()) a.createGroup(name.trim(), contacts.filter { it.id in picked }) })
         ErrorLine(a)
     } }
 }

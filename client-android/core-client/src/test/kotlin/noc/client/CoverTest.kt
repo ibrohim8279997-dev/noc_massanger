@@ -110,4 +110,28 @@ class CoverTest {
         val s = FakeServer(); s.reply = { ByteArray(10) }
         assertFalse(chan(s).exchangeOnce())
     }
+
+    @Test fun prekey_request_rides_in_a_normal_sized_slot_and_gets_the_keys_back() {
+        val s = FakeServer(); val c = chan(s)
+        val owner = ByteArray(32) { 7 }
+        val bundle = ByteArray(1800) { 1 }; val otp = ByteArray(40) { 2 }
+        val packed = java.nio.ByteBuffer.allocate(CoverChannel.ENVELOPE).putInt(bundle.size).put(bundle).put(1).putInt(otp.size).put(otp).array()
+        s.reply = { s.empty(CoverChannel.D_PREKEY, ByteArray(16), packed) }
+        val f = c.requestPrekeys(owner); c.exchangeOnce()
+        val (b, o) = f.get(1, java.util.concurrent.TimeUnit.SECONDS)
+        assertContentEquals(bundle, b); assertContentEquals(otp, o)
+        assertEquals(SLOT_UP, s.slots[0].size)                                        // indistinguishable by size from any other slot
+        assertEquals(CoverChannel.F_PREKEY, s.slots[0][0].toInt() and CoverChannel.F_PREKEY)
+        assertContentEquals(owner, s.slots[0].copyOfRange(81, 81 + 32))
+    }
+
+    @Test fun missing_prekeys_and_rate_limit_become_404_and_429() {
+        val s = FakeServer(); val c = chan(s)
+        s.reply = { s.empty(CoverChannel.D_NOPREKEY) }
+        val f = c.requestPrekeys(ByteArray(32)); c.exchangeOnce()
+        assertEquals(404, assertFailsWith<java.util.concurrent.ExecutionException> { f.get(1, java.util.concurrent.TimeUnit.SECONDS) }.cause.let { (it as ApiException).code })
+        s.reply = { s.empty(D_REJECTED) }
+        val g = c.requestPrekeys(ByteArray(32)); c.exchangeOnce()
+        assertEquals(429, (assertFailsWith<java.util.concurrent.ExecutionException> { g.get(1, java.util.concurrent.TimeUnit.SECONDS) }.cause as ApiException).code)
+    }
 }

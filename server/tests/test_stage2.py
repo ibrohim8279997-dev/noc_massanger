@@ -1,6 +1,6 @@
 import os
 
-from app.config import D_HAS_PACKET, D_REJECTED, D_UNAUTH, ENVELOPE_SIZE, F_ACK, F_UPLOAD, SLOT_DOWN, SLOT_UP
+from app.config import D_HAS_PACKET, D_NOPREKEY, D_PREKEY, D_REJECTED, D_UNAUTH, ENVELOPE_SIZE, F_ACK, F_PREKEY, F_UPLOAD, SLOT_DOWN, SLOT_UP
 from app.limits.rate import Limiter
 
 from .conftest import Dev, b64, envelope
@@ -114,3 +114,26 @@ def test_exchange_upload_respects_rate_limit(env, user):
     env.app.state.put_limit = Limiter(1)
     assert not exch(env, slot(F_UPLOAD, dest=raw(mid))).content[0] & D_REJECTED
     assert exch(env, slot(F_UPLOAD, dest=raw(mid))).content[0] & D_REJECTED
+
+
+def test_prekey_request_inside_a_slot_is_same_size_and_consumes_one_time_key(env, user):
+    env.api.call(user, "PUT", "/v1/prekeys", json={"bundle": b64(b"BUNDLE"), "one_time": [b64(b"OTP1")]})
+    asker = os.urandom(0)
+    r1 = exch(env, slot(F_PREKEY, env=raw(user.pub_s) + os.urandom(ENVELOPE_SIZE - 32)))
+    r2 = exch(env, slot(F_PREKEY, env=raw(user.pub_s) + os.urandom(ENVELOPE_SIZE - 32)))
+    r3 = exch(env, slot(F_PREKEY, env=os.urandom(32) + os.urandom(ENVELOPE_SIZE - 32)))
+    assert {len(r1.content), len(r2.content), len(r3.content)} == {SLOT_DOWN}
+    assert r1.content[0] & D_PREKEY and b"BUNDLE" in r1.content and b"OTP1" in r1.content
+    assert r2.content[0] & D_PREKEY and b"OTP1" not in r2.content           # one-time key is gone, long-term bundle remains
+    assert r3.content[0] & D_NOPREKEY
+
+
+def test_prekey_request_is_rate_limited_and_never_uploads(env, user):
+    mid, _ = mailbox(env, user)
+    env.api.call(user, "PUT", "/v1/prekeys", json={"bundle": b64(b"B"), "one_time": []})
+    env.app.state.prekey_limit = Limiter(1)
+    body = raw(user.pub_s) + os.urandom(ENVELOPE_SIZE - 32)
+    assert not exch(env, slot(F_PREKEY, env=body)).content[0] & D_REJECTED
+    assert exch(env, slot(F_PREKEY, env=body)).content[0] & D_REJECTED
+    exch(env, slot(F_PREKEY | F_UPLOAD, dest=raw(mid), env=body))           # flags combined: upload must be ignored
+    assert env.app.state.store.list_packets(raw(mid), 5) == []

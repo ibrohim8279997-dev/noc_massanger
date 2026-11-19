@@ -34,6 +34,7 @@ class MainActivity : AppCompatActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private val lockRunnable = Runnable { lockNow() }
     private var loop: Job? = null
+    private var cover: noc.client.CoverChannel? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // no screenshots, no screen recording, blank thumbnail in recent apps
@@ -47,15 +48,17 @@ class MainActivity : AppCompatActivity() {
     @androidx.compose.runtime.Composable private fun Root() {
         val s = ui.screen
         BackHandler(enabled = s !is Screen.Lock && s !is Screen.Chats && s !is Screen.Problem && s !is Screen.Setup) {
-            ui.screen = when (s) { is Screen.Safety -> Screen.Chat(s.id); is Screen.Admin, is Screen.Meet -> Screen.Contacts; else -> Screen.Chats }
+            ui.screen = when (s) { is Screen.Safety -> Screen.Chat(s.id); is Screen.Admin, is Screen.Meet, is Screen.GroupNew -> Screen.Contacts; else -> Screen.Chats }
         }
         when (s) {
             Screen.Lock -> LockScreen(this); is Screen.Problem -> ProblemScreen(s.key); Screen.Setup -> SetupScreen(this)
             Screen.Chats -> ChatsScreen(this); Screen.Contacts -> ContactsScreen(this); Screen.Protect -> ProtectScreen(this)
             is Screen.Chat -> ChatScreen(this, s.id); Screen.Settings -> SettingsScreen(this)
-            Screen.Meet -> MeetScreen(this); Screen.Admin -> AdminScreen(this); is Screen.Safety -> SafetyScreen(this, s.id)
+            Screen.Meet -> MeetScreen(this); Screen.GroupNew -> GroupNewScreen(this); Screen.Admin -> AdminScreen(this); is Screen.Safety -> SafetyScreen(this, s.id)
         }
     }
+
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean { cover?.touch(); return super.dispatchTouchEvent(ev) }
 
     // ------------------------------------------------------------------ auto-lock
     override fun onStart() { super.onStart(); handler.removeCallbacks(lockRunnable) }
@@ -117,6 +120,7 @@ class MainActivity : AppCompatActivity() {
         fun proceed(adminSeed: ByteArray?) = io {
             val db = app.db!!; db.setSetting("server", url); app.connect()
             val m = app.messenger!!
+            if (app.viaTor && !app.tor.startWithFallback(bridgeLines())) { ui.error = getString(R.string.tor_failed); return@io }   // fail closed
             try {
                 if (adminSeed != null) {
                     val s = SeedSigner(adminSeed)
@@ -150,30 +154,50 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** Every cycle: make sure this device is registered (mailbox + prekeys), then fetch. Survives app restarts. */
+    private fun bridgeLines(): List<String> = (app.db?.setting("bridges", "") ?: "").lines().map { it.trim() }.filter { it.isNotEmpty() }
+
+    /**
+     * Background work while unlocked: Tor (if the server is an .onion), registration, then ONE constant-rate channel
+     * that carries both directions in fixed-size slots (real traffic replaces the dummies).
+     */
     private fun startLoop() {
         loop?.cancel(); retry?.cancel()
         val m = app.messenger ?: return
+        val db = app.db ?: return
         loop = lifecycleScope.launch(Dispatchers.IO) {
-            val wake = Channel<Unit>(Channel.CONFLATED)
-            var ws: okhttp3.WebSocket? = null
             try {
-                while (isActive) {
-                    try {
-                        m.sync(); ui.registered = true
-                        if (ws == null) ws = runCatching { m.listen { wake.trySend(Unit) } }.getOrNull()
-                        val n = m.poll(); val p = m.purgeExpired(); if (n > 0 || p > 0) ui.tick++
-                    } catch (e: CancellationException) { throw e }
-                    catch (e: ApiException) { if (e.code == 401) ui.registered = false }
-                    catch (e: Exception) { }
-                    withTimeoutOrNull(15_000) { wake.receive() }
+                if (app.viaTor) {
+                    launch { while (isActive) { ui.torText = torLine(); delay(1000) } }
+                    if (!app.tor.startWithFallback(bridgeLines())) { ui.error = getString(R.string.tor_failed); return@launch }   // fail closed: nothing is sent
                 }
-            } finally { ws?.close(1000, null) }
+                while (isActive) {
+                    try { m.sync(); ui.registered = true; break }
+                    catch (e: CancellationException) { throw e }
+                    catch (e: ApiException) { if (e.code == 401) ui.registered = false; delay(3000) }
+                    catch (e: Exception) { delay(3000) }
+                }
+                m.onChange = { ui.tick++ }
+                val ch = m.startCover({ if (db.setting("cover", "normal") == "paranoid") noc.client.CoverMode.PARANOID else noc.client.CoverMode.NORMAL })
+                cover = ch
+                launch { while (isActive) { try { m.maintain(); if (m.purgeExpired() > 0) ui.tick++ } catch (e: CancellationException) { throw e } catch (e: Exception) { }; delay(60_000) } }
+                ch.run({ !isActive })
+            } finally { cover = null }
         }
+    }
+
+    private fun torLine(): String? = when (app.tor.state.get()) {
+        noc.app.net.TorManager.State.READY -> getString(R.string.tor_ready)
+        noc.app.net.TorManager.State.FAILED -> getString(R.string.tor_failed)
+        noc.app.net.TorManager.State.STOPPED -> null
+        else -> getString(R.string.tor_connecting, app.tor.progress)
     }
 
     // ------------------------------------------------------------------ chat actions
     fun sendText(c: Contact, text: String) = io { app.messenger!!.sendText(c, text); ui.tick++ }
+
+    fun sendGroupText(g: noc.client.Group, text: String) = io { app.messenger!!.sendGroupText(g, text); ui.tick++ }
+    fun createGroup(name: String, members: List<Contact>) = io { app.messenger!!.createGroup(name, members); ui.tick++; ui.screen = Screen.Chats }
+    fun rotateNow(done: () -> Unit) = io { app.messenger!!.rotateMailbox(); done() }
 
     fun sendPicked(c: Contact, uri: Uri) = io {
         val limit = 20 * 1024 * 1024

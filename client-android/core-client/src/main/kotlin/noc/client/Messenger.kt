@@ -25,6 +25,8 @@ class Messenger(private val db: Storage, val api: ServerApi) {
     /** Where outgoing envelopes go: straight to the server, or into the constant-rate cover channel. */
     fun interface Outbound { fun send(dest: ByteArray, envelope: ByteArray) }
     @Volatile var outbound: Outbound = Outbound { d, e -> api.putPacket(d, e) }
+    /** Key lookup. Direct mode: plain request. Cover mode: asked inside a constant-size slot. */
+    @Volatile var prekeyFetcher: (ByteArray) -> Pair<ByteArray, ByteArray?> = { api.takePrekeys(it) }
     /** Random delay before each copy of a group message, so the server cannot link the copies by timing. */
     @Volatile var groupJitterMs: Long = 3000
     @Volatile var sleeper: (Long) -> Unit = { Thread.sleep(it) }
@@ -115,7 +117,7 @@ class Messenger(private val db: Storage, val api: ServerApi) {
     private fun send(c: Contact, kind: Kind, payload: ByteArray, ttl: Int) {
         val a = addr(c); val conv = Conversation(me, a)
         if (!me.store.containsSession(a)) {
-            val (lt, otp) = api.takePrekeys(c.deviceKey)
+            val (lt, otp) = prekeyFetcher(c.deviceKey)
             conv.startFrom(LongTermBundle.parse(lt), otp?.let { OneTime.parse(it) })
         }
         outbound.send(c.mailboxId, conv.seal(Inner(kind, signer.publicKey, System.currentTimeMillis(), ttl, payload)))
@@ -244,8 +246,10 @@ class Messenger(private val db: Storage, val api: ServerApi) {
     // ---------------------------------------------------------------- cover traffic wiring
     /** Switches this messenger to the constant-rate channel: outgoing goes through slots, incoming arrives through slots. */
     fun startCover(mode: () -> CoverMode, activePeriodMs: Long = 2_000, idlePeriodMs: Long = 30_000, activeWindowMs: Long = 180_000, paranoidPeriodMs: Long = 5_000): CoverChannel {
-        val ch = CoverChannel(api, { receiveBoxes() }, mode, { receive(it) }, activePeriodMs = activePeriodMs, idlePeriodMs = idlePeriodMs, activeWindowMs = activeWindowMs, paranoidPeriodMs = paranoidPeriodMs)
+        val ch = CoverChannel(api, { receiveBoxes() }, mode, { receive(it) }, activePeriodMs = activePeriodMs, idlePeriodMs = idlePeriodMs,
+            activeWindowMs = activeWindowMs, paranoidPeriodMs = paranoidPeriodMs, asyncDelivery = true)
         outbound = Outbound { d, e -> ch.enqueue(d, e) }
+        prekeyFetcher = { owner -> try { ch.requestPrekeys(owner).get(120, java.util.concurrent.TimeUnit.SECONDS) } catch (e: java.util.concurrent.ExecutionException) { throw e.cause ?: e } }
         return ch
     }
 

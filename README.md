@@ -5,9 +5,10 @@
 ## Статус
 | Часть | Состояние |
 |---|---|
-| server/ (этап 1) | готово, 31 тест: `cd server && pip install -r requirements-dev.txt && python -m pytest` |
-| client-android/core-crypto (этап 1) | готово, 25 тестов: `cd client-android && gradle :core-crypto:test` |
+| server/ (этапы 1 и 2) | готово, 43 теста: `cd server && pip install -r requirements-dev.txt && python -m pytest` |
+| client-android/core-crypto, core-client | готово, 50 тестов (включая сквозные на настоящем сервере): `cd client-android && gradle :core-crypto:test :core-client:test` |
 | Android-приложение (этап 1) | собирается (`ANDROID_HOME=... gradle :app:assembleRelease`), на устройстве не проверено |
-| Этапы 2, 3, 4 | не начаты |
+| Этап 2 (Tor, cover traffic, ящики, группы) | реализован и проверен тестами; Tor на устройстве и мосты не проверены: `docs/security-checks/stage2.md`, `tools/stage2_checks.sh` |
+| Этапы 3, 4 | не начаты |
 
 Отчёты: `docs/security-checks/`.

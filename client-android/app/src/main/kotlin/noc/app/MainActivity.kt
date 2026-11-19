@@ -47,11 +47,12 @@ class MainActivity : AppCompatActivity() {
     @androidx.compose.runtime.Composable private fun Root() {
         val s = ui.screen
         BackHandler(enabled = s !is Screen.Lock && s !is Screen.Chats && s !is Screen.Problem && s !is Screen.Setup) {
-            ui.screen = when (s) { is Screen.Safety -> Screen.Chat(s.id); is Screen.Admin -> Screen.Settings; else -> Screen.Chats }
+            ui.screen = when (s) { is Screen.Safety -> Screen.Chat(s.id); is Screen.Admin, is Screen.Meet -> Screen.Contacts; else -> Screen.Chats }
         }
         when (s) {
             Screen.Lock -> LockScreen(this); is Screen.Problem -> ProblemScreen(s.key); Screen.Setup -> SetupScreen(this)
-            Screen.Chats -> ChatsScreen(this); is Screen.Chat -> ChatScreen(this, s.id); Screen.Settings -> SettingsScreen(this)
+            Screen.Chats -> ChatsScreen(this); Screen.Contacts -> ContactsScreen(this); Screen.Protect -> ProtectScreen(this)
+            is Screen.Chat -> ChatScreen(this, s.id); Screen.Settings -> SettingsScreen(this)
             Screen.Meet -> MeetScreen(this); Screen.Admin -> AdminScreen(this); is Screen.Safety -> SafetyScreen(this, s.id)
         }
     }
@@ -62,7 +63,7 @@ class MainActivity : AppCompatActivity() {
         super.onStop()
         if (app.unlocked) handler.postDelayed(lockRunnable, uiPref("lock_s", "30").toLong() * 1000)
     }
-    private fun lockNow() { loop?.cancel(); app.lock(); ui.error = null; ui.screen = Screen.Lock }
+    private fun lockNow() { loop?.cancel(); retry?.cancel(); app.lock(); ui.error = null; ui.screen = Screen.Lock }
 
     // ------------------------------------------------------------------ auth
     fun authenticate(onOk: () -> Unit) {
@@ -89,8 +90,12 @@ class MainActivity : AppCompatActivity() {
 
     // ------------------------------------------------------------------ helpers
     // On-screen only, never logged. Message is clipped; bound values are never part of SQLite/libsignal messages.
-    private fun describe(e: Throwable) = getString(R.string.error_generic,
-        if (e is ApiException) "HTTP ${e.code}" else e.javaClass.simpleName + (e.message?.let { ": " + it.take(120) } ?: ""))
+    private fun describe(e: Throwable): String = when {
+        e is ApiException && e.code == 401 -> getString(R.string.err_401)
+        e is ApiException && e.code == 404 -> getString(R.string.err_404)
+        e is ApiException -> getString(R.string.error_generic, "HTTP ${e.code}")
+        else -> getString(R.string.error_generic, e.javaClass.simpleName + (e.message?.let { ": " + it.take(120) } ?: ""))
+    }
 
     fun io(block: suspend () -> Unit) { lifecycleScope.launch(Dispatchers.IO) { try { block() } catch (e: Throwable) { ui.error = describe(e) } } }
 
@@ -106,7 +111,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ------------------------------------------------------------------ server connection
-    fun connectServer(url: String, token: String, onInvite: (String) -> Unit) {
+    private var retry: Job? = null
+
+    fun connectServer(url: String, token: String, onCard: (String) -> Unit) {
         fun proceed(adminSeed: ByteArray?) = io {
             val db = app.db!!; db.setSetting("server", url); app.connect()
             val m = app.messenger!!
@@ -115,10 +122,13 @@ class MainActivity : AppCompatActivity() {
                     val s = SeedSigner(adminSeed)
                     m.api.bindSuperadmin(token, s.publicKey); m.api.addUser(s, m.signer.publicKey)
                 }
-                m.sync(); ui.error = null; ui.screen = Screen.Chats; startLoop()
+                m.sync(); ui.error = null; ui.registered = true; ui.screen = Screen.Chats; startLoop()
             } catch (e: ApiException) {
                 if (adminSeed != null) app.vault.forget("admin")
-                if (e.code == 401 && adminSeed == null) onInvite(m.myInvite()) else throw e
+                if (e.code == 401 && adminSeed == null) {
+                    // not registered yet: show the card for the administrator and keep trying by itself
+                    ui.error = null; onCard(m.deviceCard()); waitForAdmin(m)
+                } else throw e
             }
         }
         if (token.isBlank()) proceed(null) else authenticate {
@@ -127,15 +137,35 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun waitForAdmin(m: noc.app.core.Messenger) {
+        retry?.cancel()
+        retry = lifecycleScope.launch(Dispatchers.IO) {
+            while (isActive && app.unlocked) {
+                delay(3000)
+                try { m.sync(); ui.registered = true; ui.screen = Screen.Chats; startLoop(); break }
+                catch (e: CancellationException) { throw e }
+                catch (e: ApiException) { if (e.code != 401) { ui.error = describe(e); break } }
+                catch (e: Exception) { }
+            }
+        }
+    }
+
+    /** Every cycle: make sure this device is registered (mailbox + prekeys), then fetch. Survives app restarts. */
     private fun startLoop() {
-        loop?.cancel()
+        loop?.cancel(); retry?.cancel()
         val m = app.messenger ?: return
         loop = lifecycleScope.launch(Dispatchers.IO) {
             val wake = Channel<Unit>(Channel.CONFLATED)
-            val ws = runCatching { m.listen { wake.trySend(Unit) } }.getOrNull()
+            var ws: okhttp3.WebSocket? = null
             try {
                 while (isActive) {
-                    try { val n = m.poll(); val p = m.purgeExpired(); if (n > 0 || p > 0) ui.tick++ } catch (e: CancellationException) { throw e } catch (e: Exception) { }
+                    try {
+                        m.sync(); ui.registered = true
+                        if (ws == null) ws = runCatching { m.listen { wake.trySend(Unit) } }.getOrNull()
+                        val n = m.poll(); val p = m.purgeExpired(); if (n > 0 || p > 0) ui.tick++
+                    } catch (e: CancellationException) { throw e }
+                    catch (e: ApiException) { if (e.code == 401) ui.registered = false }
+                    catch (e: Exception) { }
                     withTimeoutOrNull(15_000) { wake.receive() }
                 }
             } finally { ws?.close(1000, null) }

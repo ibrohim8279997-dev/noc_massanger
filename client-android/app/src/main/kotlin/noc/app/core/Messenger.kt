@@ -33,7 +33,9 @@ class Messenger(private val db: Db, val api: ServerApi) {
     /** Idempotent: creates the inbox on the server and keeps prekeys topped up. */
     @Synchronized fun sync() {
         if (db.get("self", "mailbox_created") == null) {
-            api.createMailbox(signer, mailboxId, mailboxToken); db.put("self", "mailbox_created", byteArrayOf(1))
+            try { api.createMailbox(signer, mailboxId, mailboxToken) }
+            catch (e: noc.app.net.ApiException) { if (e.code != 409) throw e }   // 409: already created by an earlier attempt
+            db.put("self", "mailbox_created", byteArrayOf(1))
         }
         if (db.get("self", "prekeys_uploaded") == null || me.oneTimeKeys().size < 5) {
             me.refill(20)
@@ -41,6 +43,10 @@ class Messenger(private val db: Db, val api: ServerApi) {
             db.put("self", "prekeys_uploaded", byteArrayOf(1))
         }
     }
+
+    /** Long-lived card for joining the server: the administrator scans it to add this device as a user. */
+    @Synchronized fun deviceCard(): String =
+        Invite(me.identityKey, signer.publicKey, mailboxId, ByteArray(16).also { rnd.nextBytes(it) }, null, System.currentTimeMillis() / 1000 + 86_400).encode()
 
     // ---------------------------------------------------------------- meeting in person
     @Synchronized fun myInvite(replyTo: ByteArray? = null): String =

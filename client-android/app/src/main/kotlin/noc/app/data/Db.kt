@@ -82,6 +82,12 @@ class Db private constructor(private val sql: SQLiteDatabase) : Kv {
             if (c.moveToNext()) Msg(c.getLong(0), c.getLong(1), c.getInt(2) == 1, c.getInt(3), c.getString(4), c.getString(5),
                 c.getInt(6) == 1, c.getLong(7), c.getLong(8), c.getInt(9) == 1) else null }.toList() }
     fun messageFile(id: Long): ByteArray? = sql.rawQuery("SELECT file FROM messages WHERE id=?", arrayOf(id.toString())).use { if (it.moveToFirst()) it.getBlob(0) else null }
+    class Last(val text: String?, val fileName: String?, val voice: Boolean, val ts: Long, val outgoing: Boolean)
+    fun lastMessage(contactId: Long): Last? = sql.rawQuery(
+        "SELECT text,file_name,voice,ts,outgoing FROM messages WHERE contact_id=? ORDER BY ts DESC, id DESC LIMIT 1",
+        arrayOf(contactId.toString())).use { if (it.moveToFirst()) Last(it.getString(0), it.getString(1), it.getInt(2) == 1, it.getLong(3), it.getInt(4) == 1) else null }
+    fun unreadCount(contactId: Long, since: Long): Int = sql.rawQuery(
+        "SELECT COUNT(*) FROM messages WHERE contact_id=? AND outgoing=0 AND ts>?", arrayOf(contactId.toString(), since.toString())).use { it.moveToFirst(); it.getInt(0) }
     fun lastMessageTs(contactId: Long): Long = sql.rawQuery("SELECT COALESCE(MAX(ts),0) FROM messages WHERE contact_id=?", arrayOf(contactId.toString())).use { it.moveToFirst(); it.getLong(0) }
     fun purgeExpired(now: Long): Int = sql.delete("messages", "expires_at>0 AND expires_at<=?", arrayOf(now.toString()))
     fun wipeAll() { sql.execSQL("DELETE FROM messages"); sql.execSQL("DELETE FROM contacts"); sql.execSQL("DELETE FROM kv"); sql.execSQL("DELETE FROM settings") }

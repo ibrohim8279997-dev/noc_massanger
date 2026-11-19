@@ -119,4 +119,6 @@
     <string name="group_create">Создать</string>
     <string name="protect_tor">Трафик только через Tor</string>
     <string name="protect_cover">Маскирующий трафик с постоянной скоростью</string>
+    <string name="server_change">Сменить адрес сервера</string>
+    <string name="server_changed">Переподключение. Ключи и контакты сохранены.</string>
 </resources>

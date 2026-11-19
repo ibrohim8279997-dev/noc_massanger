@@ -197,6 +197,13 @@ class MainActivity : AppCompatActivity() {
 
     fun sendGroupText(g: noc.client.Group, text: String) = io { app.messenger!!.sendGroupText(g, text); ui.tick++ }
     fun createGroup(name: String, members: List<Contact>) = io { app.messenger!!.createGroup(name, members); ui.tick++; ui.screen = Screen.Chats }
+    /** Keeps keys, contacts and mailboxes; only the way to the same server changes (e.g. from http://IP:8443 to http://xxxx.onion). */
+    fun changeServer(url: String, done: () -> Unit) = io {
+        loop?.cancel(); retry?.cancel(); app.tor.stop()
+        app.db!!.setSetting("server", url.trim()); app.connect()
+        startLoop(); done()
+    }
+
     fun rotateNow(done: () -> Unit) = io { app.messenger!!.rotateMailbox(); done() }
 
     fun sendPicked(c: Contact, uri: Uri) = io {

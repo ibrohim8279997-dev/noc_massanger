@@ -119,4 +119,6 @@
     <string name="group_create">Create</string>
     <string name="protect_tor">Traffic only through Tor</string>
     <string name="protect_cover">Constant-rate cover traffic</string>
+    <string name="server_change">Change server address</string>
+    <string name="server_changed">Reconnecting. Keys and contacts are kept.</string>
 </resources>

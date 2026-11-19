@@ -396,6 +396,11 @@ private fun startRecording(ctx: android.content.Context): Pair<MediaRecorder, Fi
                     choices(R.string.settings_cover, listOf("normal" to R.string.cover_normal, "paranoid" to R.string.cover_paranoid), cover) { cover = it; db.setSetting("cover", it) }
                     Text(stringResource(R.string.cover_note), color = pal.sub, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
                     Text(stringResource(if (a.app.viaTor) R.string.net_tor else R.string.net_direct), color = pal.text, modifier = Modifier.padding(top = 12.dp))
+                    var server by remember { mutableStateOf(db.setting("server", "")) }; var saved by remember { mutableStateOf(false) }
+                    Field(server, { server = it; saved = false }, stringResource(R.string.setup_url), Modifier.padding(top = 8.dp))
+                    Spacer(Modifier.height(8.dp))
+                    SecondaryButton(stringResource(R.string.server_change), { a.changeServer(server) { saved = true } })
+                    if (saved) Text(stringResource(R.string.server_changed), color = pal.ok, fontSize = 13.sp)
                     var bridges by remember { mutableStateOf(db.setting("bridges", "")) }
                     OutlinedTextField(bridges, { bridges = it; db.setSetting("bridges", it) }, Modifier.fillMaxWidth().padding(top = 8.dp),
                         label = { Text(stringResource(R.string.tor_bridges)) }, minLines = 2, shape = RoundedCornerShape(14.dp))

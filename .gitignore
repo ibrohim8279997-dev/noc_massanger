@@ -1,0 +1,11 @@
+*.db
+*.sqlite*
+*.key
+*.pem
+.env
+__pycache__/
+.venv/
+build/
+.gradle/
+local.properties
+*.log

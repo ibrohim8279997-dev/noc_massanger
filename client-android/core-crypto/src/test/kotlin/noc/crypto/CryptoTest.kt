@@ -248,3 +248,29 @@ class PersistenceTest {
         assertFails { Conversation(LocalIdentity.loadOrCreate(kv), aAddr).open(first) }   // replay of the PreKey message
     }
 }
+
+class SeedSignerTest {
+    @Test fun deterministic_and_verifies_with_jdk() {
+        val seed = ByteArray(32) { it.toByte() }
+        val a = SeedSigner(seed); val b = SeedSigner(seed)
+        assertContentEquals(a.publicKey, b.publicKey)
+        val msg = "hello".toByteArray(); val sig = a.sign(msg)
+        assertContentEquals(sig, b.sign(msg))
+        val spki = byteArrayOf(0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00) + a.publicKey
+        val pub = java.security.KeyFactory.getInstance("Ed25519").generatePublic(java.security.spec.X509EncodedKeySpec(spki))
+        assertTrue(Signature.getInstance("Ed25519").run { initVerify(pub); update(msg); verify(sig) })
+        assertFalse(Signature.getInstance("Ed25519").run { initVerify(pub); update("other".toByteArray()); verify(sig) })
+    }
+}
+
+class RefillTest {
+    @Test fun refill_tops_up_after_use() {
+        val kv = MemoryKv(); val b = LocalIdentity.loadOrCreate(kv, oneTimeCount = 3)
+        val a = LocalIdentity.create(); val aAddr = SignalProtocolAddress("alice", 1); val bAddr = SignalProtocolAddress("bob", 1)
+        a.store.pin(bAddr, b.identityKey); b.store.pin(aAddr, a.identityKey)
+        val ab = Conversation(a, bAddr); ab.startFrom(b.bundle, b.oneTimeKeys().first())
+        Conversation(b, aAddr).open(ab.seal(Inner(Kind.TEXT, key32(), 0, 0, "x".toByteArray())))
+        assertEquals(2, b.oneTimeKeys().size); b.refill(10); assertEquals(10, b.oneTimeKeys().size)
+        assertEquals(10, b.oneTimeKeys().map { it.id }.toSet().size)
+    }
+}

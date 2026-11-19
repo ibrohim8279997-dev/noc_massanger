@@ -33,3 +33,13 @@ object DeviceAuth {
             "x-sig" to b64(signer.sign(message(method, path, ts, n, body))))
     }
 }
+
+/** Ed25519 from a 32-byte seed (BouncyCastle lightweight API: same result on every Android version). */
+class SeedSigner(seed: ByteArray) : RequestSigner {
+    private val priv = org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters(seed, 0)
+    override val publicKey: ByteArray = priv.generatePublicKey().encoded
+    override fun sign(message: ByteArray): ByteArray =
+        org.bouncycastle.crypto.signers.Ed25519Signer().run { init(true, priv); update(message, 0, message.size); generateSignature() }
+
+    companion object { fun newSeed(): ByteArray = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) } }
+}

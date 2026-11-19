@@ -1,4 +1,181 @@
 package noc.app
+
+import android.media.MediaPlayer
+import android.media.MediaRecorder
+import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.provider.OpenableColumns
+import android.view.WindowManager
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.setContent
 import androidx.appcompat.app.AppCompatActivity
-class MainActivity : AppCompatActivity() { override fun onCreate(b: Bundle?) { super.onCreate(b) } }
+import androidx.appcompat.app.AppCompatDelegate
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG
+import androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
+import androidx.biometric.BiometricPrompt
+import androidx.core.content.ContextCompat
+import androidx.core.os.LocaleListCompat
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
+import noc.app.data.Contact
+import noc.app.net.ApiException
+import noc.app.security.Integrity
+import noc.app.ui.*
+import noc.crypto.SeedSigner
+import java.io.File
+
+class MainActivity : AppCompatActivity() {
+    val app get() = application as App
+    val ui = UiState()
+    private val handler = Handler(Looper.getMainLooper())
+    private val lockRunnable = Runnable { lockNow() }
+    private var loop: Job? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        // no screenshots, no screen recording, blank thumbnail in recent apps
+        window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
+        super.onCreate(savedInstanceState)
+        Integrity.problem(this, app.vault)?.let { ui.screen = Screen.Problem(it) }
+        if (ui.screen is Screen.Lock && app.unlocked) ui.screen = Screen.Chats
+        setContent { NocTheme { Root() } }
+    }
+
+    @androidx.compose.runtime.Composable private fun Root() {
+        val s = ui.screen
+        BackHandler(enabled = s !is Screen.Lock && s !is Screen.Chats && s !is Screen.Problem && s !is Screen.Setup) {
+            ui.screen = when (s) { is Screen.Safety -> Screen.Chat(s.id); is Screen.Admin -> Screen.Settings; else -> Screen.Chats }
+        }
+        when (s) {
+            Screen.Lock -> LockScreen(this); is Screen.Problem -> ProblemScreen(s.key); Screen.Setup -> SetupScreen(this)
+            Screen.Chats -> ChatsScreen(this); is Screen.Chat -> ChatScreen(this, s.id); Screen.Settings -> SettingsScreen(this)
+            Screen.Meet -> MeetScreen(this); Screen.Admin -> AdminScreen(this); is Screen.Safety -> SafetyScreen(this, s.id)
+        }
+    }
+
+    // ------------------------------------------------------------------ auto-lock
+    override fun onStart() { super.onStart(); handler.removeCallbacks(lockRunnable) }
+    override fun onStop() {
+        super.onStop()
+        if (app.unlocked) handler.postDelayed(lockRunnable, uiPref("lock_s", "30").toLong() * 1000)
+    }
+    private fun lockNow() { loop?.cancel(); app.lock(); ui.error = null; ui.screen = Screen.Lock }
+
+    // ------------------------------------------------------------------ auth
+    fun authenticate(onOk: () -> Unit) {
+        val kinds = BIOMETRIC_STRONG or DEVICE_CREDENTIAL
+        if (BiometricManager.from(this).canAuthenticate(kinds) != BiometricManager.BIOMETRIC_SUCCESS) { ui.error = getString(R.string.no_lock); return }
+        val prompt = BiometricPrompt(this, ContextCompat.getMainExecutor(this), object : BiometricPrompt.AuthenticationCallback() {
+            override fun onAuthenticationSucceeded(r: BiometricPrompt.AuthenticationResult) { try { ui.error = null; onOk() } catch (e: Throwable) { ui.error = describe(e) } }
+            override fun onAuthenticationError(code: Int, msg: CharSequence) { ui.error = msg.toString() }
+        })
+        prompt.authenticate(BiometricPrompt.PromptInfo.Builder().setTitle(getString(R.string.unlock_title))
+            .setAllowedAuthenticators(kinds).build())
+    }
+
+    fun unlockWithAuth() = authenticate {
+        app.unlock()
+        if (app.messenger == null) ui.screen = Screen.Setup else { ui.screen = Screen.Chats; startLoop() }
+    }
+
+    fun withAdmin(block: (SeedSigner) -> Unit) = authenticate {
+        val seed = app.vault.load("admin", "noc_admin") ?: error("no admin key")
+        val signer = SeedSigner(seed); seed.fill(0)
+        io { block(signer) }
+    }
+
+    // ------------------------------------------------------------------ helpers
+    private fun describe(e: Throwable) = getString(R.string.error_generic, if (e is ApiException) "HTTP ${e.code}" else e.javaClass.simpleName)
+
+    fun io(block: suspend () -> Unit) { lifecycleScope.launch(Dispatchers.IO) { try { block() } catch (e: Throwable) { ui.error = describe(e) } } }
+
+    fun uiPref(k: String, def: String) = getSharedPreferences("ui", MODE_PRIVATE).getString(k, def) ?: def
+    fun setUiPref(k: String, v: String) { getSharedPreferences("ui", MODE_PRIVATE).edit().putString(k, v).apply() }
+    fun setTheme(v: String) {
+        setUiPref("theme", v)
+        AppCompatDelegate.setDefaultNightMode(when (v) { "light" -> AppCompatDelegate.MODE_NIGHT_NO; "dark" -> AppCompatDelegate.MODE_NIGHT_YES; else -> AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM })
+    }
+    fun setLanguage(v: String) {
+        setUiPref("lang", v)
+        AppCompatDelegate.setApplicationLocales(if (v == "system") LocaleListCompat.getEmptyLocaleList() else LocaleListCompat.forLanguageTags(v))
+    }
+
+    // ------------------------------------------------------------------ server connection
+    fun connectServer(url: String, token: String, onInvite: (String) -> Unit) {
+        fun proceed(adminSeed: ByteArray?) = io {
+            val db = app.db!!; db.setSetting("server", url); app.connect()
+            val m = app.messenger!!
+            try {
+                if (adminSeed != null) {
+                    val s = SeedSigner(adminSeed)
+                    m.api.bindSuperadmin(token, s.publicKey); m.api.addUser(s, m.signer.publicKey)
+                }
+                m.sync(); ui.error = null; ui.screen = Screen.Chats; startLoop()
+            } catch (e: ApiException) {
+                if (adminSeed != null) app.vault.forget("admin")
+                if (e.code == 401 && adminSeed == null) onInvite(m.myInvite()) else throw e
+            }
+        }
+        if (token.isBlank()) proceed(null) else authenticate {
+            val seed = SeedSigner.newSeed(); app.vault.store("admin", "noc_admin", seed)   // needs the fresh authentication
+            proceed(seed)
+        }
+    }
+
+    private fun startLoop() {
+        loop?.cancel()
+        val m = app.messenger ?: return
+        loop = lifecycleScope.launch(Dispatchers.IO) {
+            val wake = Channel<Unit>(Channel.CONFLATED)
+            val ws = runCatching { m.listen { wake.trySend(Unit) } }.getOrNull()
+            try {
+                while (isActive) {
+                    try { val n = m.poll(); val p = m.purgeExpired(); if (n > 0 || p > 0) ui.tick++ } catch (e: CancellationException) { throw e } catch (e: Exception) { }
+                    withTimeoutOrNull(15_000) { wake.receive() }
+                }
+            } finally { ws?.close(1000, null) }
+        }
+    }
+
+    // ------------------------------------------------------------------ chat actions
+    fun sendText(c: Contact, text: String) = io { app.messenger!!.sendText(c, text); ui.tick++ }
+
+    fun sendPicked(c: Contact, uri: Uri) = io {
+        val limit = 20 * 1024 * 1024
+        val data = contentResolver.openInputStream(uri)!!.use { it.readNBytes(limit + 1) }
+        if (data.size > limit) { ui.error = getString(R.string.too_large); return@io }
+        val name = contentResolver.query(uri, null, null, null, null)?.use { if (it.moveToFirst()) it.getString(it.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME)) else null } ?: "file"
+        app.messenger!!.sendFile(c, data, name, false); ui.tick++
+    }
+
+    fun sendRecording(c: Contact, rec: MediaRecorder, f: File) = io {
+        try { rec.stop() } catch (_: RuntimeException) { }
+        rec.release()
+        val data = f.readBytes(); f.delete()
+        if (data.isNotEmpty()) { app.messenger!!.sendFile(c, data, "voice.m4a", true); ui.tick++ }
+    }
+
+    fun saveFile(msgId: Long, uri: Uri) = io {
+        val data = app.db!!.messageFile(msgId) ?: return@io
+        contentResolver.openOutputStream(uri)!!.use { it.write(data) }
+    }
+
+    fun playVoice(msgId: Long) = io {
+        val data = app.db!!.messageFile(msgId) ?: return@io
+        val f = File.createTempFile("play", ".m4a", cacheDir).also { it.writeBytes(data) }
+        runOnUiThread {
+            MediaPlayer().apply {
+                setDataSource(f.path); prepare(); start()
+                setOnCompletionListener { release(); f.delete() }
+            }
+        }
+    }
+
+    fun wipe() {
+        lockNow()
+        deleteDatabase("noc.db"); app.vault.forget("master"); app.vault.forget("admin")
+    }
+}

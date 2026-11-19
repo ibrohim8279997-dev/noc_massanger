@@ -74,8 +74,18 @@ class StrictStore(identity: IdentityKeyPair, regId: Int) : InMemorySignalProtoco
 }
 
 /** A local user: identity, signed prekey, Kyber prekey, a batch of one-time prekeys. */
-class LocalIdentity private constructor(val store: PinnedStore, val bundle: LongTermBundle, private val otpIds: List<Int>) {
+class LocalIdentity private constructor(val store: PinnedStore, val bundle: LongTermBundle, private val otpIds: MutableList<Int>) {
     val identityKey: IdentityKey get() = store.identityKeyPair.publicKey
+
+    /** Tops up one-time prekeys to [target] (ids are random, never reused while still stored). */
+    fun refill(target: Int = 20) {
+        otpIds.removeAll { !store.containsPreKey(it) }
+        while (otpIds.size < target) {
+            val id = rnd.nextInt(0xFFFFFF - 100_000) + 100_000
+            if (store.containsPreKey(id)) continue
+            store.storePreKey(id, PreKeyRecord(id, ECKeyPair.generate())); otpIds.add(id)
+        }
+    }
 
     fun oneTimeKeys(): List<OneTime> = otpIds.filter { store.containsPreKey(it) }.map { OneTime(it, store.loadPreKey(it).keyPair.publicKey) }
 
@@ -93,7 +103,7 @@ class LocalIdentity private constructor(val store: PinnedStore, val bundle: Long
                 val idp = IdentityKeyPair(saved)
                 val store = PersistentSignalStore(kv, idp, java.nio.ByteBuffer.wrap(kv.get("self", "regid")!!).int)
                 val lt = LongTermBundle.parse(kv.get("self", "bundle")!!)
-                return LocalIdentity(store, lt, store.let { kv.keys("prekey").map { it.toInt() }.sorted() })
+                return LocalIdentity(store, lt, kv.keys("prekey").map { it.toInt() }.sorted().toMutableList())
             }
             val idp = IdentityKeyPair.generate()
             val reg = rnd.nextInt(16379) + 1
@@ -113,7 +123,7 @@ class LocalIdentity private constructor(val store: PinnedStore, val bundle: Long
             store.storeKyberPreKey(1, KyberPreKeyRecord(1, now, kem, ksig))
             val ids = (1..oneTimeCount).map { id -> store.storePreKey(id, PreKeyRecord(id, ECKeyPair.generate())); id }
             val lt = LongTermBundle(store.localRegistrationId, 1, idp.publicKey, 1, spk.publicKey, sig, 1, kem.publicKey, ksig)
-            return LocalIdentity(store, lt, ids)
+            return LocalIdentity(store, lt, ids.toMutableList())
         }
     }
 }

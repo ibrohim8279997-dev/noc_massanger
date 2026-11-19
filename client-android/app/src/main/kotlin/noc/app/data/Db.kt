@@ -18,7 +18,8 @@ class Db private constructor(private val sql: SQLiteDatabase) : Kv {
             System.loadLibrary("sqlcipher")
             val f = ctx.getDatabasePath("noc.db").also { it.parentFile?.mkdirs() }
             val db = SQLiteDatabase.openOrCreateDatabase(f, key, null, null, null)
-            db.execSQL("PRAGMA secure_delete = ON")
+            // PRAGMAs that return a row must go through rawQuery: execSQL throws SQLiteException for them on Android
+            db.rawQuery("PRAGMA secure_delete = ON", arrayOf<String>()).use { it.moveToFirst() }
             db.execSQL("CREATE TABLE IF NOT EXISTS kv(ns TEXT NOT NULL, k TEXT NOT NULL, v BLOB NOT NULL, PRIMARY KEY(ns,k))")
             db.execSQL("CREATE TABLE IF NOT EXISTS contacts(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, " +
                 "signal_name TEXT NOT NULL UNIQUE, device_key BLOB NOT NULL, mailbox_id BLOB NOT NULL, identity BLOB NOT NULL)")

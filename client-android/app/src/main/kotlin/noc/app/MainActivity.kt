@@ -88,7 +88,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ------------------------------------------------------------------ helpers
-    private fun describe(e: Throwable) = getString(R.string.error_generic, if (e is ApiException) "HTTP ${e.code}" else e.javaClass.simpleName)
+    // On-screen only, never logged. Message is clipped; bound values are never part of SQLite/libsignal messages.
+    private fun describe(e: Throwable) = getString(R.string.error_generic,
+        if (e is ApiException) "HTTP ${e.code}" else e.javaClass.simpleName + (e.message?.let { ": " + it.take(120) } ?: ""))
 
     fun io(block: suspend () -> Unit) { lifecycleScope.launch(Dispatchers.IO) { try { block() } catch (e: Throwable) { ui.error = describe(e) } } }
 

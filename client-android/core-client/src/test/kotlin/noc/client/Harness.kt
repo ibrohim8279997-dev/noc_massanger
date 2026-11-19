@@ -28,9 +28,12 @@ class MemoryStorage : Storage {
         contacts.add(Contact(old?.id ?: nextId++, name, signalName, deviceKey, mailboxId, identity))
     }
     override fun deleteContact(id: Long) { contacts.removeAll { it.id == id }; msgs.removeAll { it.m.contactId == id } }
-    override fun addMessage(contactId: Long, outgoing: Boolean, kind: Int, text: String?, file: ByteArray?, fileName: String?, voice: Boolean, ts: Long, expiresAt: Long) {
-        msgs.add(M(Msg(nextId++, contactId, outgoing, kind, text, fileName, voice, ts, expiresAt, file != null), file))
+    override fun addMessage(contactId: Long, outgoing: Boolean, kind: Int, text: String?, file: ByteArray?, fileName: String?, voice: Boolean, ts: Long, expiresAt: Long, senderId: Long) {
+        msgs.add(M(Msg(nextId++, contactId, outgoing, kind, text, fileName, voice, ts, expiresAt, file != null, senderId), file))
     }
+    private val groups = ArrayList<Group>()
+    override fun saveGroup(groupId: ByteArray, name: String, members: List<ByteArray>): Long { val g = Group(nextId++, groupId, name, members); groups.add(g); return g.id }
+    override fun groups() = groups.toList()
     override fun messages(contactId: Long) = msgs.filter { it.m.contactId == contactId }.map { it.m }
     override fun messageFile(id: Long) = msgs.firstOrNull { it.m.id == id }?.file
     override fun lastMessage(contactId: Long) = messages(contactId).lastOrNull()?.let { LastMsg(it.text, it.fileName, it.voice, it.ts, it.outgoing) }

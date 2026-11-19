@@ -7,7 +7,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, WebSoc
 from pydantic import BaseModel, Field
 
 from ..auth import authenticate
-from ..config import ENVELOPE_SIZE
+import os
+from ..config import ENVELOPE_SIZE, SLOT_UP, SLOT_DOWN, F_UPLOAD, F_ACK, D_HAS_PACKET, D_UNAUTH, D_REJECTED
 from ..limits.validation import b64d, b64d_max, b64e
 
 log = logging.getLogger("noc")
@@ -107,8 +108,12 @@ async def put_prekeys(body: PrekeysIn, request: Request, me: bytes = Depends(dev
 
 
 @router.get("/prekeys/{pubkey}")
-async def get_prekeys(pubkey: str, request: Request, _: bytes = Depends(device)):
-    r = request.app.state.store.take_prekeys(b64d(pubkey, 32))
+async def get_prekeys(pubkey: str, request: Request):
+    """Anonymous: the server must not learn who is about to write to whom. Rate-limited per owner."""
+    owner = b64d(pubkey, 32)
+    if not request.app.state.prekey_limit.allow(owner):
+        raise HTTPException(429)
+    r = request.app.state.store.take_prekeys(owner)
     if not r:
         raise HTTPException(404)
     bundle, otp = r
@@ -137,12 +142,15 @@ async def delete_mailbox(mid: str, request: Request):
 
 
 @router.post("/mailboxes/{mid}/packets", status_code=201)
-async def put_packet(mid: str, request: Request, _: bytes = Depends(device)):
-    body = await request.body()  # auth already passed via Depends; Starlette caches the body
+async def put_packet(mid: str, request: Request):
+    """Anonymous ("sealed sender"): knowing the mailbox id is the write capability; the sender is inside the envelope."""
+    body = await request.body()
     if len(body) != ENVELOPE_SIZE:
         raise HTTPException(400, "bad size")
     st = request.app.state
     mbox = b64d(mid, 16)
+    if not st.put_limit.allow(mbox):
+        raise HTTPException(429)
     pid = st.store.put_packet(mbox, body, st.settings.packet_ttl_s, st.settings.mailbox_max_packets)
     if pid is None:
         raise HTTPException(404)
@@ -193,3 +201,35 @@ async def ws(sock: WebSocket):
     finally:
         if mid is not None:
             st.notifier.subs[mid].discard(q)
+
+
+# ---------------------------------------------------------------- constant-size exchange (cover traffic)
+@router.post("/exchange")
+async def exchange(request: Request):
+    """One request = one upload slot + one download slot, always the same size, real or dummy.
+    up:   flags | recv mailbox | recv token | ack id | dest mailbox | envelope
+    down: flags | packet id | packet
+    """
+    st = request.app.state
+    body = await request.body()
+    if len(body) != SLOT_UP:
+        raise HTTPException(400, "bad size")
+    flags, recv, token, ackid, dest, env = body[0], body[1:17], body[17:49], body[49:65], body[65:81], body[81:]
+    down, pid, data = 0, os.urandom(16), os.urandom(ENVELOPE_SIZE)
+    if st.store.check_token(recv, token):
+        if flags & F_ACK:
+            st.store.ack_packet(recv, ackid)
+        got = st.store.list_packets(recv, 1)
+        if got:
+            down |= D_HAS_PACKET
+            pid, data = got[0]
+    else:
+        down |= D_UNAUTH
+    if flags & F_UPLOAD:
+        if st.put_limit.allow(dest) and st.store.put_packet(dest, env, st.settings.packet_ttl_s, st.settings.mailbox_max_packets) is not None:
+            st.notifier.notify(dest)
+        else:
+            down |= D_REJECTED
+    out = bytes([down]) + pid + data
+    assert len(out) == SLOT_DOWN
+    return Response(out, media_type="application/octet-stream")

@@ -20,6 +20,8 @@ class Db private constructor(private val sql: SQLiteDatabase) : Storage {
             db.execSQL("CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT, contact_id INTEGER NOT NULL, " +
                 "outgoing INTEGER NOT NULL, kind INTEGER NOT NULL, text TEXT, file BLOB, file_name TEXT, voice INTEGER NOT NULL DEFAULT 0, " +
                 "ts INTEGER NOT NULL, expires_at INTEGER NOT NULL DEFAULT 0)")
+            try { db.execSQL("ALTER TABLE messages ADD COLUMN sender INTEGER NOT NULL DEFAULT 0") } catch (_: Exception) { }   // upgrade from stage 1
+            db.execSQL("CREATE TABLE IF NOT EXISTS groups(id INTEGER PRIMARY KEY AUTOINCREMENT, group_id BLOB NOT NULL UNIQUE, name TEXT NOT NULL, members BLOB NOT NULL)")
             db.execSQL("CREATE TABLE IF NOT EXISTS settings(k TEXT PRIMARY KEY, v TEXT NOT NULL)")
             return Db(db)
         }
@@ -62,19 +64,26 @@ class Db private constructor(private val sql: SQLiteDatabase) : Storage {
     override fun deleteContact(id: Long) { sql.delete("messages", "contact_id=?", arrayOf(id.toString())); sql.delete("contacts", "id=?", arrayOf(id.toString())) }
 
     // ---- messages
+    override fun saveGroup(groupId: ByteArray, name: String, members: List<ByteArray>): Long {
+        val packed = java.io.ByteArrayOutputStream().also { o -> members.forEach { o.write(it) } }.toByteArray()
+        return sql.insertWithOnConflict("groups", null, ContentValues().apply { put("group_id", groupId); put("name", name); put("members", packed) }, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+    override fun groups(): List<Group> = sql.rawQuery("SELECT id,group_id,name,members FROM groups ORDER BY name", arrayOf<String>()).use { c ->
+        generateSequence { if (c.moveToNext()) { val m = c.getBlob(3); Group(c.getLong(0), c.getBlob(1), c.getString(2), (0 until m.size / 32).map { m.copyOfRange(it * 32, it * 32 + 32) }) } else null }.toList() }
     override fun addMessage(contactId: Long, outgoing: Boolean, kind: Int, text: String?, file: ByteArray?, fileName: String?,
-                   voice: Boolean, ts: Long, expiresAt: Long) {
+                   voice: Boolean, ts: Long, expiresAt: Long, senderId: Long) {
         sql.insert("messages", null, ContentValues().apply {
+            put("sender", senderId)
             put("contact_id", contactId); put("outgoing", if (outgoing) 1 else 0); put("kind", kind); put("text", text)
             if (file != null) put("file", file); put("file_name", fileName); put("voice", if (voice) 1 else 0)
             put("ts", ts); put("expires_at", expiresAt)
         })
     }
     override fun messages(contactId: Long): List<Msg> = sql.rawQuery(
-        "SELECT id,contact_id,outgoing,kind,text,file_name,voice,ts,expires_at,file IS NOT NULL FROM messages WHERE contact_id=? ORDER BY ts, id",
+        "SELECT id,contact_id,outgoing,kind,text,file_name,voice,ts,expires_at,file IS NOT NULL,sender FROM messages WHERE contact_id=? ORDER BY ts, id",
         arrayOf(contactId.toString())).use { c -> generateSequence {
             if (c.moveToNext()) Msg(c.getLong(0), c.getLong(1), c.getInt(2) == 1, c.getInt(3), c.getString(4), c.getString(5),
-                c.getInt(6) == 1, c.getLong(7), c.getLong(8), c.getInt(9) == 1) else null }.toList() }
+                c.getInt(6) == 1, c.getLong(7), c.getLong(8), c.getInt(9) == 1, c.getLong(10)) else null }.toList() }
     override fun messageFile(id: Long): ByteArray? = sql.rawQuery("SELECT file FROM messages WHERE id=?", arrayOf(id.toString())).use { if (it.moveToFirst()) it.getBlob(0) else null }
     override fun lastMessage(contactId: Long): LastMsg? = sql.rawQuery(
         "SELECT text,file_name,voice,ts,outgoing FROM messages WHERE contact_id=? ORDER BY ts DESC, id DESC LIMIT 1",

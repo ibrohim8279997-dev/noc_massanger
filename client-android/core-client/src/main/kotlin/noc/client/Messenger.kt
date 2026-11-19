@@ -13,6 +13,7 @@ sealed class InviteResult {
 
 private fun ByteArray.hex() = joinToString("") { "%02x".format(it) }
 private const val MAX_FILE = 20 * 1024 * 1024
+private const val DAY = 86_400_000L
 
 /** Glue between storage, crypto and server. All calls block: run them off the main thread. */
 class Messenger(private val db: Storage, val api: ServerApi) {
@@ -21,9 +22,21 @@ class Messenger(private val db: Storage, val api: ServerApi) {
     val signer: SeedSigner = SeedSigner(db.get("self", "device_seed") ?: SeedSigner.newSeed().also { db.put("self", "device_seed", it) })
     private val book = InviteBook()
 
-    private fun selfBlob(k: String, size: Int) = db.get("self", k) ?: ByteArray(size).also { rnd.nextBytes(it); db.put("self", k, it) }
-    val mailboxId: ByteArray get() = selfBlob("mailbox_id", 16)
-    private val mailboxToken: ByteArray get() = selfBlob("mailbox_token", 32)
+    /** Where outgoing envelopes go: straight to the server, or into the constant-rate cover channel. */
+    fun interface Outbound { fun send(dest: ByteArray, envelope: ByteArray) }
+    @Volatile var outbound: Outbound = Outbound { d, e -> api.putPacket(d, e) }
+    /** Random delay before each copy of a group message, so the server cannot link the copies by timing. */
+    @Volatile var groupJitterMs: Long = 3000
+    @Volatile var sleeper: (Long) -> Unit = { Thread.sleep(it) }
+    @Volatile var onChange: () -> Unit = {}
+
+    private fun blob(k: String, size: Int) = db.get("self", k) ?: ByteArray(size).also { rnd.nextBytes(it); db.put("self", k, it) }
+    val mailboxId: ByteArray get() = blob("mailbox_id", 16)
+    private val mailboxToken: ByteArray get() = blob("mailbox_token", 32)
+
+    /** Mailboxes to download from: the current one, plus the previous one while a rotation is settling. */
+    fun receiveBoxes(): List<Pair<ByteArray, ByteArray>> =
+        listOfNotNull(mailboxId to mailboxToken, db.get("self", "old_mailbox_id")?.let { it to db.get("self", "old_mailbox_token")!! })
 
     private fun addr(c: Contact) = SignalProtocolAddress(c.signalName, 1)
 
@@ -41,11 +54,41 @@ class Messenger(private val db: Storage, val api: ServerApi) {
         }
     }
 
+    // ---------------------------------------------------------------- mailbox rotation
+    /** New mailbox id+token; contacts learn the new id through an encrypted message; the old box lives on for a grace period. */
+    @Synchronized fun rotateMailbox(nowMs: Long = System.currentTimeMillis(), graceMs: Long = 2 * DAY) {
+        val newId = ByteArray(16).also { rnd.nextBytes(it) }; val newTok = ByteArray(32).also { rnd.nextBytes(it) }
+        api.createMailbox(signer, newId, newTok)
+        finishRotation(force = true)                                   // an even older box is retired first
+        db.put("self", "old_mailbox_id", mailboxId); db.put("self", "old_mailbox_token", mailboxToken)
+        db.put("self", "old_until", nowMs.toString().plus(":").plus(graceMs).toByteArray())
+        db.put("self", "mailbox_id", newId); db.put("self", "mailbox_token", newTok)
+        db.put("self", "rotated_at", nowMs.toString().toByteArray())
+        db.contacts().forEach { c -> try { send(c, Kind.MAILBOX_UPDATE, newId, 0) } catch (e: Exception) { } }
+    }
+
+    /** Deletes the old mailbox once its grace period is over (or immediately when forced). */
+    @Synchronized fun finishRotation(nowMs: Long = System.currentTimeMillis(), force: Boolean = false) {
+        val oldId = db.get("self", "old_mailbox_id") ?: return
+        val (since, grace) = String(db.get("self", "old_until") ?: return).split(":").map { it.toLong() }
+        if (!force && nowMs < since + grace) return
+        try { api.deleteMailbox(oldId, db.get("self", "old_mailbox_token")!!) } catch (e: ApiException) { if (e.code != 404) throw e }
+        db.delete("self", "old_mailbox_id"); db.delete("self", "old_mailbox_token"); db.delete("self", "old_until")
+    }
+
+    /** Called from the background loop: rotate every [everyMs], retire old boxes. */
+    @Synchronized fun maintain(nowMs: Long = System.currentTimeMillis(), everyMs: Long = 7 * DAY) {
+        finishRotation(nowMs)
+        val last = db.get("self", "rotated_at")?.let { String(it).toLong() }
+        if (last == null) db.put("self", "rotated_at", nowMs.toString().toByteArray())
+        else if (nowMs - last >= everyMs) rotateMailbox(nowMs)
+    }
+
+    // ---------------------------------------------------------------- meeting in person
     /** Long-lived card for joining the server: the administrator scans it to add this device as a user. */
     @Synchronized fun deviceCard(): String =
         Invite(me.identityKey, signer.publicKey, mailboxId, ByteArray(16).also { rnd.nextBytes(it) }, null, System.currentTimeMillis() / 1000 + 86_400).encode()
 
-    // ---------------------------------------------------------------- meeting in person
     @Synchronized fun myInvite(replyTo: ByteArray? = null): String =
         book.issue(me.identityKey, signer.publicKey, mailboxId, System.currentTimeMillis() / 1000, replyTo).encode()
 
@@ -72,10 +115,10 @@ class Messenger(private val db: Storage, val api: ServerApi) {
     private fun send(c: Contact, kind: Kind, payload: ByteArray, ttl: Int) {
         val a = addr(c); val conv = Conversation(me, a)
         if (!me.store.containsSession(a)) {
-            val (lt, otp) = api.takePrekeys(signer, c.deviceKey)
+            val (lt, otp) = api.takePrekeys(c.deviceKey)
             conv.startFrom(LongTermBundle.parse(lt), otp?.let { OneTime.parse(it) })
         }
-        api.putPacket(signer, c.mailboxId, conv.seal(Inner(kind, signer.publicKey, System.currentTimeMillis(), ttl, payload)))
+        outbound.send(c.mailboxId, conv.seal(Inner(kind, signer.publicKey, System.currentTimeMillis(), ttl, payload)))
     }
 
     private fun autoDeleteS() = db.setting("autodelete_s", "0").toIntOrNull() ?: 0
@@ -96,23 +139,58 @@ class Messenger(private val db: Storage, val api: ServerApi) {
         db.addMessage(c.id, true, Kind.FILE_MANIFEST.code, null, data, name, voice, System.currentTimeMillis(), expiry(ttl))
     }
 
+    // ---------------------------------------------------------------- groups: one separately encrypted copy per member
+    private fun members(g: Group): List<Contact> =
+        g.members.filter { !it.contentEquals(signer.publicKey) }.mapNotNull { k -> db.contacts().firstOrNull { it.deviceKey.contentEquals(k) } }
+
+    private fun encodeInfo(gid: ByteArray, name: String, keys: List<ByteArray>): ByteArray {
+        val n = name.toByteArray()
+        val b = ByteBuffer.allocate(16 + 2 + n.size + 2 + 32 * keys.size).put(gid).putShort(n.size.toShort()).put(n).putShort(keys.size.toShort())
+        keys.forEach { b.put(it) }
+        return b.array()
+    }
+
+    private fun spread(targets: List<Contact>, action: (Contact) -> Unit) {
+        targets.shuffled(rnd).forEachIndexed { i, c ->
+            if (i > 0 && groupJitterMs > 0) sleeper((rnd.nextDouble() * groupJitterMs).toLong())
+            action(c)
+        }
+    }
+
+    @Synchronized fun createGroup(name: String, with: List<Contact>): Group {
+        require(with.isNotEmpty() && with.size < 30)
+        val gid = ByteArray(16).also { rnd.nextBytes(it) }
+        val keys = listOf(signer.publicKey) + with.map { it.deviceKey }
+        val rowId = db.saveGroup(gid, name, keys)
+        val info = encodeInfo(gid, name, keys)
+        spread(with) { send(it, Kind.GROUP_INFO, info, 0) }
+        return db.group(rowId)!!
+    }
+
+    @Synchronized fun sendGroupText(g: Group, text: String) {
+        val ttl = autoDeleteS()
+        spread(members(g)) { send(it, Kind.GROUP_TEXT, g.groupId + text.toByteArray(), ttl) }
+        db.addMessage(-g.id, true, Kind.TEXT.code, text, null, null, false, System.currentTimeMillis(), expiry(ttl), 0)
+    }
+
     // ---------------------------------------------------------------- receiving
-    /** Fetch, decrypt (trying each contact: the sender is hidden inside the envelope), store, acknowledge. Returns count. */
+    /** Direct mode: fetch, decrypt, store, acknowledge. */
     @Synchronized fun poll(): Int {
         var n = 0
-        for (p in api.fetch(mailboxId, mailboxToken)) {
-            if (handle(p.data)) n++
-            api.ack(mailboxId, mailboxToken, p.id)   // undecryptable packets are dropped, they would otherwise be retried forever
+        for ((mb, tok) in receiveBoxes()) for (p in api.fetch(mb, tok)) {
+            if (receive(p.data)) n++
+            api.ack(mb, tok, p.id)   // undecryptable packets are dropped, they would otherwise be retried forever
         }
         if (n > 0 && me.oneTimeKeys().size < 5) sync()
         return n
     }
 
-    private fun handle(envelope: ByteArray): Boolean {
+    /** One raw envelope from the server (either mode). The sender is hidden inside, so every contact is tried. */
+    @Synchronized fun receive(envelope: ByteArray): Boolean {
         for (c in db.contacts()) {
             val inner = try { Conversation(me, addr(c)).open(envelope) } catch (e: Exception) { continue }
             if (!inner.senderDeviceKey.contentEquals(c.deviceKey)) return false   // claimed sender does not match the key we decrypted with
-            store(c, inner); return true
+            store(c, inner); onChange(); return true
         }
         return false
     }
@@ -133,6 +211,21 @@ class Messenger(private val db: Storage, val api: ServerApi) {
                 if (idx < 0 || idx > 100_000) return
                 db.put("chunk", "${id.hex()}:$idx", ByteArray(b.remaining()).also { b.get(it) }); assemble(id.hex())
             }
+            Kind.MAILBOX_UPDATE -> if (m.payload.size == 16)
+                db.saveContact(c.name, c.signalName, c.deviceKey, m.payload, c.identity)          // authenticated: it came through our session with c
+            Kind.GROUP_INFO -> try {
+                val b = ByteBuffer.wrap(m.payload); val gid = ByteArray(16).also { b.get(it) }
+                val name = String(ByteArray(b.short.toInt() and 0xffff).also { b.get(it) })
+                val keys = List(b.short.toInt() and 0xffff) { ByteArray(32).also { k -> b.get(k) } }
+                if (keys.size in 2..30 && keys.any { it.contentEquals(signer.publicKey) } && keys.any { it.contentEquals(c.deviceKey) } && db.groupByGroupId(gid) == null)
+                    db.saveGroup(gid, name, keys)
+            } catch (e: Exception) { }
+            Kind.GROUP_TEXT -> {
+                if (m.payload.size < 16) return
+                val g = db.groupByGroupId(m.payload.copyOfRange(0, 16)) ?: return
+                if (g.members.none { it.contentEquals(c.deviceKey) }) return          // not a member: ignore
+                db.addMessage(-g.id, false, Kind.TEXT.code, String(m.payload.copyOfRange(16, m.payload.size)), null, null, false, System.currentTimeMillis(), exp, c.id)
+            }
         }
     }
 
@@ -148,7 +241,14 @@ class Messenger(private val db: Storage, val api: ServerApi) {
         for (i in 0 until man.count) db.delete("chunk", "$idHex:$i")
     }
 
-    fun listen(onNew: () -> Unit) = api.listen(mailboxId, mailboxToken, onNew)
+    // ---------------------------------------------------------------- cover traffic wiring
+    /** Switches this messenger to the constant-rate channel: outgoing goes through slots, incoming arrives through slots. */
+    fun startCover(mode: () -> CoverMode, activePeriodMs: Long = 2_000, idlePeriodMs: Long = 30_000, activeWindowMs: Long = 180_000, paranoidPeriodMs: Long = 5_000): CoverChannel {
+        val ch = CoverChannel(api, { receiveBoxes() }, mode, { receive(it) }, activePeriodMs = activePeriodMs, idlePeriodMs = idlePeriodMs, activeWindowMs = activeWindowMs, paranoidPeriodMs = paranoidPeriodMs)
+        outbound = Outbound { d, e -> ch.enqueue(d, e) }
+        return ch
+    }
 
+    fun listen(onNew: () -> Unit) = api.listen(mailboxId, mailboxToken, onNew)
     fun purgeExpired() = db.purgeExpired(System.currentTimeMillis())
 }

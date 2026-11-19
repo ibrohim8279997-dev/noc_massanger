@@ -15,8 +15,7 @@ class ApiException(val code: Int) : IOException("HTTP $code")
 class Packet(val id: String, val data: ByteArray)
 
 /** Talks to the server described in protocol/server-api-v1.md. Never logs. */
-class ServerApi(private val base: String) {
-    private val http = OkHttpClient.Builder().connectTimeout(java.time.Duration.ofSeconds(20)).readTimeout(java.time.Duration.ofSeconds(40)).build()
+class ServerApi(private val base: String, private val http: OkHttpClient = Transport.direct()) : Exchanger {
     private val rnd = SecureRandom()
     private val enc = java.util.Base64.getUrlEncoder().withoutPadding()
     private val dec = java.util.Base64.getUrlDecoder()
@@ -47,14 +46,18 @@ class ServerApi(private val base: String) {
     fun putPrekeys(me: RequestSigner, bundle: ByteArray, oneTime: List<ByteArray>) {
         call(me, "PUT", "/v1/prekeys", j("bundle" to b64(bundle), "one_time" to JSONArray(oneTime.map { b64(it) })), json = true)
     }
-    /** (long-term bundle, one-time key or null) */
-    fun takePrekeys(me: RequestSigner, owner: ByteArray): Pair<ByteArray, ByteArray?> {
-        val o = JSONObject(String(call(me, "GET", "/v1/prekeys/${b64(owner)}")))
+    /** Anonymous. (long-term bundle, one-time key or null) */
+    fun takePrekeys(owner: ByteArray): Pair<ByteArray, ByteArray?> {
+        val o = JSONObject(String(call(null, "GET", "/v1/prekeys/${b64(owner)}")))
         return unb64(o.getString("bundle")) to (if (o.isNull("one_time")) null else unb64(o.getString("one_time")))
     }
 
     fun createMailbox(me: RequestSigner, id: ByteArray, token: ByteArray) { call(me, "POST", "/v1/mailboxes", j("id" to b64(id), "token" to b64(token)), json = true) }
-    fun putPacket(me: RequestSigner, mailbox: ByteArray, envelope: ByteArray) { call(me, "POST", "/v1/mailboxes/${b64(mailbox)}/packets", envelope) }
+    /** Anonymous: the sender is only inside the encrypted envelope. */
+    fun putPacket(mailbox: ByteArray, envelope: ByteArray) { call(null, "POST", "/v1/mailboxes/${b64(mailbox)}/packets", envelope) }
+
+    override fun exchange(slot: ByteArray): ByteArray = call(null, "POST", "/v1/exchange", slot)
+    fun deleteMailbox(id: ByteArray, token: ByteArray) { call(null, "DELETE", "/v1/mailboxes/${b64(id)}", extra = mapOf("x-mailbox-token" to b64(token))) }
     fun fetch(mailbox: ByteArray, token: ByteArray): List<Packet> {
         val a = JSONArray(String(call(null, "GET", "/v1/mailboxes/${b64(mailbox)}/packets", extra = mapOf("x-mailbox-token" to b64(token)))))
         return (0 until a.length()).map { Packet(a.getJSONObject(it).getString("id"), unb64(a.getJSONObject(it).getString("data"))) }

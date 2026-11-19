@@ -18,6 +18,8 @@ class Settings:
     prekey_blob_max: int = 8192
     clock_skew_s: int = 60
     cleanup_interval_s: int = 60
+    put_rate_per_min: int = 120          # per destination mailbox (senders are anonymous)
+    prekey_rate_per_min: int = 30        # per prekey owner: stops draining one-time keys
 
     def __post_init__(self):
         if not HEX_KEY_RE.match(self.db_key_hex):
@@ -40,3 +42,9 @@ def from_env() -> Settings:
         db_key_hex=read_db_key(),
         packet_ttl_s=int(os.environ.get("NOC_PACKET_TTL_S", 7 * 86400)),
     )
+
+# Constant-size exchange slot (cover traffic): every request and every response has exactly these sizes.
+SLOT_UP = 1 + 16 + 32 + 16 + 16 + ENVELOPE_SIZE      # flags, recv mailbox, recv token, ack id, dest mailbox, envelope
+SLOT_DOWN = 1 + 16 + ENVELOPE_SIZE                   # flags, packet id, packet
+F_UPLOAD, F_ACK = 1, 2                               # up flags
+D_HAS_PACKET, D_UNAUTH, D_REJECTED = 1, 2, 4         # down flags

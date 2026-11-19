@@ -52,12 +52,12 @@ object FileCrypto {
         }
     }
 
-    fun encrypt(data: ByteArray, name: String = "", voice: Boolean = false): Pair<FileManifest, List<ByteArray>> {
+    fun encrypt(data: ByteArray, name: String = "", voice: Boolean = false, chunkSize: Int = CHUNK_SIZE): Pair<FileManifest, List<ByteArray>> {
         val id = ByteArray(16).also { rnd.nextBytes(it) }
         val key = ByteArray(32).also { rnd.nextBytes(it) }
-        val count = maxOf(1, (data.size + CHUNK_SIZE - 1) / CHUNK_SIZE)
+        val count = maxOf(1, (data.size + chunkSize - 1) / chunkSize)
         val chunks = (0 until count).map { i ->
-            val part = data.copyOfRange(minOf(i * CHUNK_SIZE, data.size), minOf((i + 1) * CHUNK_SIZE, data.size))
+            val part = data.copyOfRange(minOf(i * chunkSize, data.size), minOf((i + 1) * chunkSize, data.size))
             cipher(Cipher.ENCRYPT_MODE, key, i, aad(id, i, count, data.size.toLong())).doFinal(part)
         }
         return FileManifest(id, key, data.size.toLong(), count, chunks.map(::sha), sha(data), voice, name) to chunks

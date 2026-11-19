@@ -123,4 +123,9 @@
     <string name="server_changed">Reconnecting. Keys and contacts are kept.</string>
     <string name="admin_rotate">Change administrator key</string>
     <string name="admin_rotated">Administrator key changed. The old key no longer works.</string>
+    <string name="section_mesh">Mesh (no network)</string>
+    <string name="mesh_switch">Pass messages phone to phone</string>
+    <string name="mesh_note">Your phone carries sealed messages for others over Bluetooth and forgets them once passed on. It cannot read them. Works only with people in your circle. Small files (up to 200 KB) are sent over mesh. Not yet tested on devices.</string>
+    <string name="mesh_status">Neighbours: %1$d, carried: %2$d</string>
+    <string name="mesh_perm">Bluetooth permission is needed for mesh.</string>
 </resources>

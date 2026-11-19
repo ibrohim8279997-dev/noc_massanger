@@ -13,13 +13,14 @@ class Conversation(private val me: LocalIdentity, val peer: SignalProtocolAddres
         SessionBuilder(store, peer).process(lt.toBundle(otp))
     }
 
-    fun seal(msg: Inner): ByteArray {
-        val ct = SessionCipher(store, peer).encrypt(msg.encode())
-        return Envelope.pack(ct.serialize())
-    }
+    /** Signal ciphertext without any outer envelope (for transports with their own fixed-size packets). */
+    fun sealRaw(msg: Inner): ByteArray = SessionCipher(store, peer).encrypt(msg.encode()).serialize()
 
-    fun open(envelope: ByteArray): Inner {
-        val raw = Envelope.unpack(envelope)
+    fun seal(msg: Inner): ByteArray = Envelope.pack(sealRaw(msg))
+
+    fun open(envelope: ByteArray): Inner = openRaw(Envelope.unpack(envelope))
+
+    fun openRaw(raw: ByteArray): Inner {
         val cipher = SessionCipher(store, peer)
         val plain = try {
             cipher.decrypt(PreKeySignalMessage(raw))

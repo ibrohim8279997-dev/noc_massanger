@@ -5,7 +5,7 @@ import java.nio.ByteBuffer
 const val ENVELOPE_SIZE = 16384
 
 enum class Kind(val code: Int) {
-    TEXT(1), FILE_MANIFEST(2), FILE_CHUNK(3), GROUP_INFO(4), GROUP_TEXT(5), MAILBOX_UPDATE(6);
+    TEXT(1), FILE_MANIFEST(2), FILE_CHUNK(3), GROUP_INFO(4), GROUP_TEXT(5), MAILBOX_UPDATE(6), FILE_NEED(7);
     companion object { fun of(c: Int) = entries.firstOrNull { it.code == c } ?: throw MalformedException("kind") }
 }
 

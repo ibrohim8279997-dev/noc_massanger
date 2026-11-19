@@ -33,7 +33,7 @@ dependencies {
     torLibs("org.briarproject:obfs4proxy-android:0.0.14-tor2")
     torLibs("org.briarproject:snowflake-android:2.9.1")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
-    implementation(project(":core-client")) { exclude(group = "org.signal", module = "libsignal-client") }
+    implementation(project(":core-mesh")) { exclude(group = "org.signal", module = "libsignal-client") }
     implementation("org.signal:libsignal-android:0.86.5")
     implementation("net.zetetic:sqlcipher-android:4.6.1")
     implementation("androidx.sqlite:sqlite:2.4.0")

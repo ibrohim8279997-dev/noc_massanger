@@ -43,3 +43,11 @@ class SeedSigner(seed: ByteArray) : RequestSigner {
 
     companion object { fun newSeed(): ByteArray = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) } }
 }
+
+object Ed25519Verify {
+    fun verify(publicKey: ByteArray, message: ByteArray, signature: ByteArray): Boolean = try {
+        org.bouncycastle.crypto.signers.Ed25519Signer().run {
+            init(false, org.bouncycastle.crypto.params.Ed25519PublicKeyParameters(publicKey, 0)); update(message, 0, message.size); verifySignature(signature)
+        }
+    } catch (e: Exception) { false }
+}

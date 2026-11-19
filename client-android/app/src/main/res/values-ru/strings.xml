@@ -123,4 +123,9 @@
     <string name="server_changed">Переподключение. Ключи и контакты сохранены.</string>
     <string name="admin_rotate">Сменить ключ администратора</string>
     <string name="admin_rotated">Ключ администратора сменён. Старый больше не работает.</string>
+    <string name="section_mesh">Mesh (без сети)</string>
+    <string name="mesh_switch">Передавать сообщения от телефона к телефону</string>
+    <string name="mesh_note">Ваш телефон переносит чужие запечатанные сообщения по Bluetooth и забывает их после передачи, прочитать их он не может. Работает только с людьми вашего круга. Небольшие файлы (до 200 КБ) идут по mesh. На устройствах пока не проверялось.</string>
+    <string name="mesh_status">Соседей: %1$d, переносится: %2$d</string>
+    <string name="mesh_perm">Для mesh нужно разрешение Bluetooth.</string>
 </resources>

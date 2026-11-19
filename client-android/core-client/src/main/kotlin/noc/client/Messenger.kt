@@ -14,6 +14,8 @@ sealed class InviteResult {
 private fun ByteArray.hex() = joinToString("") { "%02x".format(it) }
 private const val MAX_FILE = 20 * 1024 * 1024
 private const val DAY = 86_400_000L
+private const val MESH_MAX_BODY = 3960      // what fits in a 4096-byte mesh envelope
+private const val MESH_CHUNK = 1800        // file chunk size over mesh (small radio packets)
 
 /** Glue between storage, crypto and server. All calls block: run them off the main thread. */
 class Messenger(private val db: Storage, val api: ServerApi) {
@@ -31,6 +33,12 @@ class Messenger(private val db: Storage, val api: ServerApi) {
     @Volatile var groupJitterMs: Long = 3000
     @Volatile var sleeper: (Long) -> Unit = { Thread.sleep(it) }
     @Volatile var onChange: () -> Unit = {}
+    /** Set when mesh mode is on: gets the raw Signal ciphertext of every outgoing message (a second, offline path to the recipient). */
+    @Volatile var meshOut: ((ByteArray) -> Unit)? = null
+
+    /** Secret shared by the circle (travels inside the QR when people meet). Used by the mesh to recognise members and to rotate advertisements. */
+    val circleKey: ByteArray get() = blob("circle_key", 32)
+    private fun markCircleShared() { db.put("self", "circle_shared", byteArrayOf(1)) }
 
     private fun blob(k: String, size: Int) = db.get("self", k) ?: ByteArray(size).also { rnd.nextBytes(it); db.put("self", k, it) }
     val mailboxId: ByteArray get() = blob("mailbox_id", 16)
@@ -89,10 +97,12 @@ class Messenger(private val db: Storage, val api: ServerApi) {
     // ---------------------------------------------------------------- meeting in person
     /** Long-lived card for joining the server: the administrator scans it to add this device as a user. */
     @Synchronized fun deviceCard(): String =
-        Invite(me.identityKey, signer.publicKey, mailboxId, ByteArray(16).also { rnd.nextBytes(it) }, null, System.currentTimeMillis() / 1000 + 86_400).encode()
+        Invite(me.identityKey, signer.publicKey, mailboxId, ByteArray(16).also { rnd.nextBytes(it) }, null, System.currentTimeMillis() / 1000 + 86_400).encode()   // no circle key: this card goes to the administrator
 
-    @Synchronized fun myInvite(replyTo: ByteArray? = null): String =
-        book.issue(me.identityKey, signer.publicKey, mailboxId, System.currentTimeMillis() / 1000, replyTo).encode()
+    @Synchronized fun myInvite(replyTo: ByteArray? = null): String {
+        markCircleShared()
+        return book.issue(me.identityKey, signer.publicKey, mailboxId, System.currentTimeMillis() / 1000, replyTo, circleKey).encode()
+    }
 
     @Synchronized fun acceptInvite(text: String, name: String, confirmChange: Boolean = false): InviteResult {
         val inv = try { Invite.decode(text.trim(), System.currentTimeMillis() / 1000) } catch (e: MalformedException) { return InviteResult.Rejected }
@@ -105,8 +115,10 @@ class Messenger(private val db: Storage, val api: ServerApi) {
             if (!confirmChange) return InviteResult.KeyChanged(existing.name)
             me.store.acceptKeyChange(a, inv.identity)
         } else me.store.pin(a, inv.identity)
+        // circle key: a phone that has not yet handed out its own key adopts the one it is shown; so a chain of meetings converges on one key
+        inv.circleKey?.let { if (db.get("self", "circle_shared") == null) { db.put("self", "circle_key", it); markCircleShared() } }
         db.saveContact(existing?.name ?: name.ifBlank { signalName.take(8) }, signalName, inv.deviceKey, inv.mailboxId, inv.identity.serialize())
-        val reply = if (inv.replyTo == null) book.issue(me.identityKey, signer.publicKey, mailboxId, System.currentTimeMillis() / 1000, inv.nonce).encode() else null
+        val reply = if (inv.replyTo == null) { markCircleShared(); book.issue(me.identityKey, signer.publicKey, mailboxId, System.currentTimeMillis() / 1000, inv.nonce, circleKey).encode() } else null
         return InviteResult.Added(db.contactBySignalName(signalName)!!, reply)
     }
 
@@ -114,13 +126,22 @@ class Messenger(private val db: Storage, val api: ServerApi) {
         SafetyNumber.of(signer.publicKey, me.identityKey, c.deviceKey, org.signal.libsignal.protocol.IdentityKey(c.identity))
 
     // ---------------------------------------------------------------- sending
-    private fun send(c: Contact, kind: Kind, payload: ByteArray, ttl: Int) {
+    /** Returns false only for mesh-only sends that did not fit or had no mesh. [meshOnly]: skip the server (offline file transfer). */
+    private fun send(c: Contact, kind: Kind, payload: ByteArray, ttl: Int, meshOnly: Boolean = false): Boolean {
         val a = addr(c); val conv = Conversation(me, a)
         if (!me.store.containsSession(a)) {
+            if (meshOnly) return false                        // offline: nobody to fetch keys from, a session must exist already
             val (lt, otp) = prekeyFetcher(c.deviceKey)
             conv.startFrom(LongTermBundle.parse(lt), otp?.let { OneTime.parse(it) })
         }
-        outbound.send(c.mailboxId, conv.seal(Inner(kind, signer.publicKey, System.currentTimeMillis(), ttl, payload)))
+        val ct = conv.sealRaw(Inner(kind, signer.publicKey, System.currentTimeMillis(), ttl, payload))
+        // two independent paths: the mesh (works with no network at all) and the server. Only if NEITHER works is it an error.
+        var delivered = false; var failure: Exception? = null
+        val mesh = meshOut
+        if (mesh != null && ct.size <= MESH_MAX_BODY) { mesh(ct); delivered = true }
+        if (!meshOnly) try { outbound.send(c.mailboxId, Envelope.pack(ct)); delivered = true } catch (e: Exception) { failure = e }
+        if (!delivered && failure != null) throw failure
+        return delivered
     }
 
     private fun autoDeleteS() = db.setting("autodelete_s", "0").toIntOrNull() ?: 0
@@ -139,6 +160,36 @@ class Messenger(private val db: Storage, val api: ServerApi) {
         send(c, Kind.FILE_MANIFEST, m.serialize(), ttl)
         chunks.forEachIndexed { i, ct -> send(c, Kind.FILE_CHUNK, m.fileId + ByteBuffer.allocate(4).putInt(i).array() + ct, ttl) }
         db.addMessage(c.id, true, Kind.FILE_MANIFEST.code, null, data, name, voice, System.currentTimeMillis(), expiry(ttl))
+    }
+
+    // ---------------------------------------------------------------- files over the mesh (small chunks, re-sent on request)
+    private class OutFile(val contactId: Long, val chunks: List<ByteArray>, val fileId: ByteArray, val ttl: Int)
+    private val outFiles = HashMap<String, OutFile>()          // RAM only; lets us answer "chunk N is missing"
+
+    @Synchronized fun sendFileMesh(c: Contact, data: ByteArray, name: String, voice: Boolean): Boolean {
+        require(data.size <= MAX_FILE) { "file too large" }
+        if (meshOut == null) return false
+        val ttl = autoDeleteS()
+        val (m, chunks) = FileCrypto.encrypt(data, name, voice, MESH_CHUNK)
+        if (!send(c, Kind.FILE_MANIFEST, m.serialize(), ttl, meshOnly = true)) return false
+        chunks.forEachIndexed { i, ct -> send(c, Kind.FILE_CHUNK, m.fileId + ByteBuffer.allocate(4).putInt(i).array() + ct, ttl, meshOnly = true) }
+        outFiles[m.fileId.hex()] = OutFile(c.id, chunks, m.fileId, ttl)
+        db.addMessage(c.id, true, Kind.FILE_MANIFEST.code, null, data, name, voice, System.currentTimeMillis(), expiry(ttl))
+        return true
+    }
+
+    /** Receiver side: for every unfinished file ask the sender for the chunks that are still missing. Returns how many requests were sent. */
+    @Synchronized fun requestMissingChunks(): Int {
+        var n = 0
+        for (idHex in db.keys("manifest")) {
+            val man = try { FileManifest.parse(db.get("manifest", idHex) ?: continue) } catch (e: MalformedException) { continue }
+            val contact = db.contact(String(db.get("manifest_meta", idHex) ?: continue).split(":")[0].toLong()) ?: continue
+            val missing = (0 until man.count).filter { db.get("chunk", "$idHex:$it") == null }
+            if (missing.isEmpty()) continue
+            val payload = ByteBuffer.allocate(16 + 2 + 4 * minOf(missing.size, 200)).put(man.fileId).putShort(minOf(missing.size, 200).toShort()).also { b -> missing.take(200).forEach { b.putInt(it) } }.array()
+            if (send(contact, Kind.FILE_NEED, payload, 0)) n++
+        }
+        return n
     }
 
     // ---------------------------------------------------------------- groups: one separately encrypted copy per member
@@ -189,8 +240,14 @@ class Messenger(private val db: Storage, val api: ServerApi) {
 
     /** One raw envelope from the server (either mode). The sender is hidden inside, so every contact is tried. */
     @Synchronized fun receive(envelope: ByteArray): Boolean {
+        val raw = try { Envelope.unpack(envelope) } catch (e: MalformedException) { return false }
+        return receiveCiphertext(raw)
+    }
+
+    /** Same, for a raw Signal ciphertext (this is what arrives from the mesh). A message already received by another path fails to decrypt (duplicate) and is ignored. */
+    @Synchronized fun receiveCiphertext(raw: ByteArray): Boolean {
         for (c in db.contacts()) {
-            val inner = try { Conversation(me, addr(c)).open(envelope) } catch (e: Exception) { continue }
+            val inner = try { Conversation(me, addr(c)).openRaw(raw) } catch (e: Exception) { continue }
             if (!inner.senderDeviceKey.contentEquals(c.deviceKey)) return false   // claimed sender does not match the key we decrypted with
             store(c, inner); onChange(); return true
         }
@@ -212,6 +269,13 @@ class Messenger(private val db: Storage, val api: ServerApi) {
                 val b = ByteBuffer.wrap(m.payload); val id = ByteArray(16).also { b.get(it) }; val idx = b.getInt()
                 if (idx < 0 || idx > 100_000) return
                 db.put("chunk", "${id.hex()}:$idx", ByteArray(b.remaining()).also { b.get(it) }); assemble(id.hex())
+            }
+            Kind.FILE_NEED -> {
+                if (m.payload.size < 18) return
+                val b = ByteBuffer.wrap(m.payload); val id = ByteArray(16).also { b.get(it) }; val k = b.short.toInt() and 0xffff
+                val of = outFiles[id.hex()] ?: return
+                if (of.contactId != c.id || b.remaining() < 4 * k) return                          // only the intended receiver may ask
+                repeat(k) { val i = b.int; if (i in of.chunks.indices) send(c, Kind.FILE_CHUNK, of.fileId + ByteBuffer.allocate(4).putInt(i).array() + of.chunks[i], of.ttl, meshOnly = true) }
             }
             Kind.MAILBOX_UPDATE -> if (m.payload.size == 16)
                 db.saveContact(c.name, c.signalName, c.deviceKey, m.payload, c.identity)          // authenticated: it came through our session with c

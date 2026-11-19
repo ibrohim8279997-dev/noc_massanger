@@ -410,6 +410,16 @@ private fun startRecording(ctx: android.content.Context): Pair<MediaRecorder, Fi
                     SecondaryButton(stringResource(R.string.rotate_now), { a.rotateNow { rotated = true } })
                     if (rotated) Text(stringResource(R.string.rotate_done), color = pal.ok, fontSize = 13.sp)
                 }
+                section(R.string.section_mesh)
+                Card {
+                    var on by remember { mutableStateOf(db.setting("mesh", "off") == "on") }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(stringResource(R.string.mesh_switch), color = pal.text, modifier = Modifier.weight(1f))
+                        Switch(on, { on = it; db.setSetting("mesh", if (it) "on" else "off"); if (it) a.enableMesh() else a.disableMesh() })
+                    }
+                    Text(stringResource(R.string.mesh_note), color = pal.sub, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+                    if (on) a.mesh?.let { Text(stringResource(R.string.mesh_status, it.neighbours, it.held), color = pal.text, modifier = Modifier.padding(top = 8.dp)) }
+                }
                 if (a.app.vault.has("admin")) { section(R.string.section_admin); SecondaryButton(stringResource(R.string.admin_open), { a.ui.screen = Screen.Admin }) }
                 SecondaryButton(stringResource(R.string.settings_wipe), { wipe = true })
                 Text(stringResource(R.string.about) + " · " + stringResource(R.string.version, BuildConfig.VERSION_NAME), color = pal.sub, fontSize = 12.sp, modifier = Modifier.padding(bottom = 12.dp))

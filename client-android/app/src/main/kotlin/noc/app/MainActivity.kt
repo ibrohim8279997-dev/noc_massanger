@@ -35,6 +35,7 @@ class MainActivity : AppCompatActivity() {
     private val lockRunnable = Runnable { lockNow() }
     private var loop: Job? = null
     private var cover: noc.client.CoverChannel? = null
+    var mesh: noc.app.mesh.MeshController? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // no screenshots, no screen recording, blank thumbnail in recent apps
@@ -66,7 +67,7 @@ class MainActivity : AppCompatActivity() {
         super.onStop()
         if (app.unlocked) handler.postDelayed(lockRunnable, uiPref("lock_s", "30").toLong() * 1000)
     }
-    private fun lockNow() { loop?.cancel(); retry?.cancel(); app.lock(); ui.error = null; ui.screen = Screen.Lock }
+    private fun lockNow() { loop?.cancel(); retry?.cancel(); mesh?.stop(); mesh = null; app.lock(); ui.error = null; ui.screen = Screen.Lock }
 
     // ------------------------------------------------------------------ auth
     fun authenticate(onOk: () -> Unit) {
@@ -177,12 +178,28 @@ class MainActivity : AppCompatActivity() {
                     catch (e: Exception) { delay(3000) }
                 }
                 m.onChange = { ui.tick++ }
+                if (db.setting("mesh", "off") == "on") startMesh()
                 val ch = m.startCover({ if (db.setting("cover", "normal") == "paranoid") noc.client.CoverMode.PARANOID else noc.client.CoverMode.NORMAL })
                 cover = ch
-                launch { while (isActive) { try { m.maintain(); if (m.purgeExpired() > 0) ui.tick++ } catch (e: CancellationException) { throw e } catch (e: Exception) { }; delay(60_000) } }
+                launch { while (isActive) { try { m.maintain(); mesh?.tick(); if (m.purgeExpired() > 0) ui.tick++ } catch (e: CancellationException) { throw e } catch (e: Exception) { }; delay(60_000) } }
                 ch.run({ !isActive })
             } finally { cover = null }
         }
+    }
+
+    private val meshPerms = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()) { r ->
+        if (r.values.all { it }) startMesh() else { app.db?.setSetting("mesh", "off"); ui.error = getString(R.string.mesh_perm) }
+    }
+
+    /** Called from Settings when the switch is turned on (asks for Bluetooth permissions first). */
+    fun enableMesh() {
+        val need = arrayOf(android.Manifest.permission.BLUETOOTH_SCAN, android.Manifest.permission.BLUETOOTH_ADVERTISE, android.Manifest.permission.BLUETOOTH_CONNECT)
+        if (need.all { checkSelfPermission(it) == android.content.pm.PackageManager.PERMISSION_GRANTED }) startMesh() else meshPerms.launch(need)
+    }
+    fun disableMesh() { mesh?.stop(); mesh = null }
+    private fun startMesh() {
+        val m = app.messenger ?: return
+        if (mesh == null) mesh = noc.app.mesh.MeshController(this, m).also { it.start() }
     }
 
     private fun torLine(): String? = when (app.tor.state.get()) {
@@ -211,7 +228,10 @@ class MainActivity : AppCompatActivity() {
         val data = contentResolver.openInputStream(uri)!!.use { it.readNBytes(limit + 1) }
         if (data.size > limit) { ui.error = getString(R.string.too_large); return@io }
         val name = contentResolver.query(uri, null, null, null, null)?.use { if (it.moveToFirst()) it.getString(it.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME)) else null } ?: "file"
-        app.messenger!!.sendFile(c, data, name, false); ui.tick++
+        val mesh = this.mesh
+        if (mesh != null && data.size <= 200 * 1024) app.messenger!!.sendFileMesh(c, data, name, false)      // offline-friendly small chunks
+        else app.messenger!!.sendFile(c, data, name, false)
+        ui.tick++
     }
 
     fun sendRecording(c: Contact, rec: MediaRecorder, f: File) = io {

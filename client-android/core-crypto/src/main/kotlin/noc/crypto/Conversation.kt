@@ -5,7 +5,7 @@ import org.signal.libsignal.protocol.message.*
 
 /** One peer. Encrypts Inner messages into fixed-size envelopes and back. */
 class Conversation(private val me: LocalIdentity, val peer: SignalProtocolAddress) {
-    private val store = me.store
+    private val store: PinnedStore = me.store
 
     /** Start from the peer's published keys; peer identity must already be pinned from the QR meeting. */
     fun startFrom(lt: LongTermBundle, otp: OneTime?) {

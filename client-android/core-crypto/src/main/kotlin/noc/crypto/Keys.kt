@@ -56,14 +56,14 @@ internal fun DataInputStream.blob(): ByteArray {
  * Signal store that only trusts identities pinned by hand (QR meeting).
  * A different key for a known contact is refused until the user explicitly accepts it.
  */
-class StrictStore(identity: IdentityKeyPair, regId: Int) : InMemorySignalProtocolStore(identity, regId) {
+class StrictStore(identity: IdentityKeyPair, regId: Int) : InMemorySignalProtocolStore(identity, regId), PinnedStore {
     private val pinned = HashMap<String, IdentityKey>()
 
-    fun pin(addr: SignalProtocolAddress, key: IdentityKey) { pinned[addr.toString()] = key }
-    fun isPinned(addr: SignalProtocolAddress) = pinned.containsKey(addr.toString())
+    override fun pin(addr: SignalProtocolAddress, key: IdentityKey) { pinned[addr.toString()] = key }
+    override fun isPinned(addr: SignalProtocolAddress) = pinned.containsKey(addr.toString())
 
     /** Called only after the user confirmed the warning about a changed key. */
-    fun acceptKeyChange(addr: SignalProtocolAddress, newKey: IdentityKey) {
+    override fun acceptKeyChange(addr: SignalProtocolAddress, newKey: IdentityKey) {
         pinned[addr.toString()] = newKey
         deleteSession(addr)  // old ratchet state belongs to the old key
         super.saveIdentity(addr, newKey)
@@ -74,16 +74,36 @@ class StrictStore(identity: IdentityKeyPair, regId: Int) : InMemorySignalProtoco
 }
 
 /** A local user: identity, signed prekey, Kyber prekey, a batch of one-time prekeys. */
-class LocalIdentity private constructor(val store: StrictStore, val bundle: LongTermBundle, private val otpIds: List<Int>) {
+class LocalIdentity private constructor(val store: PinnedStore, val bundle: LongTermBundle, private val otpIds: List<Int>) {
     val identityKey: IdentityKey get() = store.identityKeyPair.publicKey
 
-    fun oneTimeKeys(): List<OneTime> = otpIds.map { OneTime(it, store.loadPreKey(it).keyPair.publicKey) }
+    fun oneTimeKeys(): List<OneTime> = otpIds.filter { store.containsPreKey(it) }.map { OneTime(it, store.loadPreKey(it).keyPair.publicKey) }
 
     companion object {
         private val rnd = SecureRandom()
         fun create(oneTimeCount: Int = 20): LocalIdentity {
             val idp = IdentityKeyPair.generate()
-            val store = StrictStore(idp, rnd.nextInt(16379) + 1)
+            return build(StrictStore(idp, rnd.nextInt(16379) + 1), idp, oneTimeCount)
+        }
+
+        /** Loads the identity saved in [kv], or creates and saves a new one on first start. */
+        fun loadOrCreate(kv: Kv, oneTimeCount: Int = 20): LocalIdentity {
+            val saved = kv.get("self", "identity")
+            if (saved != null) {
+                val idp = IdentityKeyPair(saved)
+                val store = PersistentSignalStore(kv, idp, java.nio.ByteBuffer.wrap(kv.get("self", "regid")!!).int)
+                val lt = LongTermBundle.parse(kv.get("self", "bundle")!!)
+                return LocalIdentity(store, lt, store.let { kv.keys("prekey").map { it.toInt() }.sorted() })
+            }
+            val idp = IdentityKeyPair.generate()
+            val reg = rnd.nextInt(16379) + 1
+            kv.put("self", "identity", idp.serialize()); kv.put("self", "regid", java.nio.ByteBuffer.allocate(4).putInt(reg).array())
+            val me = build(PersistentSignalStore(kv, idp, reg), idp, oneTimeCount)
+            kv.put("self", "bundle", me.bundle.serialize())
+            return me
+        }
+
+        private fun build(store: PinnedStore, idp: IdentityKeyPair, oneTimeCount: Int): LocalIdentity {
             val now = System.currentTimeMillis()
             val spk = ECKeyPair.generate()
             val sig = idp.privateKey.calculateSignature(spk.publicKey.serialize())

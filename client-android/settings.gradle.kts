@@ -1,5 +1,4 @@
 rootProject.name = "noc-client"
-pluginManagement { repositories { gradlePluginPortal(); mavenCentral() } }
-dependencyResolutionManagement { repositories { mavenCentral() } }
-// Android modules (app, core-storage, core-net, core-security) are added once an Android SDK is available.
-include(":core-crypto")
+pluginManagement { repositories { google(); gradlePluginPortal(); mavenCentral() } }
+dependencyResolutionManagement { repositories { google(); mavenCentral() } }
+include(":core-crypto", ":app")

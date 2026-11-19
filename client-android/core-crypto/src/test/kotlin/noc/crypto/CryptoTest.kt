@@ -209,3 +209,42 @@ class AuthTest {
         if (out != null) File(out).writeText("""{"method":"PUT","path":"/v1/admin/users/abc","body":"{\"role\":\"user\"}","headers":{${h.entries.joinToString(",") { "\"${it.key}\":\"${it.value}\"" }}}}""")
     }
 }
+
+class PersistenceTest {
+    @Test fun identity_and_sessions_survive_restart() {
+        val kvA = MemoryKv(); val kvB = MemoryKv()
+        var a = LocalIdentity.loadOrCreate(kvA); var b = LocalIdentity.loadOrCreate(kvB)
+        val aAddr = SignalProtocolAddress("alice", 1); val bAddr = SignalProtocolAddress("bob", 1)
+        a.store.pin(bAddr, b.identityKey); b.store.pin(aAddr, a.identityKey)
+        val keyA = key32(); val keyB = key32()
+        var ab = Conversation(a, bAddr); var ba = Conversation(b, aAddr)
+        ab.startFrom(LongTermBundle.parse(b.bundle.serialize()), b.oneTimeKeys().first())
+        assertEquals("1", String(ba.open(ab.seal(Inner(Kind.TEXT, keyA, 0, 0, "1".toByteArray()))).payload))
+        // "restart": rebuild everything from the stored bytes only
+        a = LocalIdentity.loadOrCreate(kvA); b = LocalIdentity.loadOrCreate(kvB)
+        assertEquals(a.identityKey, LocalIdentity.loadOrCreate(kvA).identityKey)
+        ab = Conversation(a, bAddr); ba = Conversation(b, aAddr)
+        assertEquals("2", String(ba.open(ab.seal(Inner(Kind.TEXT, keyA, 0, 0, "2".toByteArray()))).payload))
+        assertEquals("3", String(ab.open(ba.seal(Inner(Kind.TEXT, keyB, 0, 0, "3".toByteArray()))).payload))
+    }
+
+    @Test fun persistent_store_also_refuses_unpinned_and_changed_keys() {
+        val a = LocalIdentity.loadOrCreate(MemoryKv()); val b = LocalIdentity.loadOrCreate(MemoryKv())
+        val bAddr = SignalProtocolAddress("bob", 1)
+        assertFailsWith<UntrustedIdentityException> { Conversation(a, bAddr).startFrom(b.bundle, null) }
+        a.store.pin(bAddr, b.identityKey)
+        assertFalse(a.store.isTrustedIdentity(bAddr, LocalIdentity.create().identityKey, org.signal.libsignal.protocol.state.IdentityKeyStore.Direction.RECEIVING))
+    }
+
+    @Test fun one_time_prekey_used_once_and_kyber_base_key_not_reusable() {
+        val kv = MemoryKv(); val b = LocalIdentity.loadOrCreate(kv)
+        val before = b.oneTimeKeys().size
+        val a = LocalIdentity.create(); val aAddr = SignalProtocolAddress("alice", 1); val bAddr = SignalProtocolAddress("bob", 1)
+        a.store.pin(bAddr, b.identityKey); b.store.pin(aAddr, a.identityKey)
+        val ab = Conversation(a, bAddr); ab.startFrom(b.bundle, b.oneTimeKeys().first())
+        val first = ab.seal(Inner(Kind.TEXT, key32(), 0, 0, "x".toByteArray()))
+        val ba = Conversation(b, aAddr); ba.open(first)
+        assertEquals(before - 1, b.oneTimeKeys().size)
+        assertFails { Conversation(LocalIdentity.loadOrCreate(kv), aAddr).open(first) }   // replay of the PreKey message
+    }
+}

@@ -9,3 +9,8 @@ build/
 .gradle/
 local.properties
 *.log
+local.properties
+client-android/**/build/
+*.apk
+*.jks
+*.keystore

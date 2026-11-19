@@ -16,7 +16,7 @@ android {
     compileOptions { isCoreLibraryDesugaringEnabled = true; sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true; buildConfig = true }
-    packaging { jniLibs.useLegacyPackaging = false; jniLibs.excludes += "**/libsignal_jni_testing.so"
+    packaging { jniLibs.useLegacyPackaging = true; jniLibs.excludes += "**/libsignal_jni_testing.so"
         resources.excludes += listOf("libsignal_jni*", "signal_jni*", "**/*.dylib", "**/*.dll") }
 }
 dependencies {

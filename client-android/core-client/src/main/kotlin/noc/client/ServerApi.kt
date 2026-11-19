@@ -40,6 +40,15 @@ class ServerApi(private val base: String, private val http: OkHttpClient) : Exch
     fun bindSuperadmin(token: String, pub: ByteArray) { call(null, "POST", "/v1/admin/bind", j("token" to token, "pubkey" to b64(pub)), json = true) }
     fun addUser(admin: RequestSigner, pub: ByteArray) { call(admin, "PUT", "/v1/admin/users/${b64(pub)}", j("role" to "user"), json = true) }
     fun removeUser(admin: RequestSigner, pub: ByteArray) { call(admin, "DELETE", "/v1/admin/users/${b64(pub)}") }
+    /** Hands the administrator role to a new key. The new key signs a proof so the server knows it is really held. */
+    fun rotateAdminKey(old: RequestSigner, new: RequestSigner) {
+        val proof = new.sign("NOC1-ROTATE\n".toByteArray() + old.publicKey + new.publicKey)
+        call(old, "POST", "/v1/admin/rotate-key", j("new_pubkey" to b64(new.publicKey), "proof" to b64(proof)), json = true)
+    }
+    fun adminLog(admin: RequestSigner): List<Triple<String, ByteArray, ByteArray>> {
+        val a = JSONArray(String(call(admin, "GET", "/v1/admin/log")))
+        return (0 until a.length()).map { val o = a.getJSONObject(it); Triple(o.getString("action"), unb64(o.getString("target")), unb64(o.getString("sig"))) }
+    }
     fun listUsers(admin: RequestSigner): List<Pair<ByteArray, String>> {
         val a = JSONArray(String(call(admin, "GET", "/v1/admin/users")))
         return (0 until a.length()).map { unb64(a.getJSONObject(it).getString("pubkey")) to a.getJSONObject(it).getString("role") }

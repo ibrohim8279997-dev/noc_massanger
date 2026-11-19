@@ -74,6 +74,19 @@ class E2eTest {
         assertEquals(listOf("1", "3"), b.storage.messages(alice.id).filter { !it.outgoing }.map { it.text })
     }
 
+    @Test fun admin_key_change_moves_the_role_and_the_old_key_stops_working_and_actions_are_logged() {
+        val s = ServerProc.start(); extra.add(s)
+        val a = Phone(s.baseUrl); val adm = setupAdmin(s, a)
+        val api = ServerApi(s.baseUrl, Transport.direct())
+        val newAdmin = noc.crypto.SeedSigner(noc.crypto.SeedSigner.newSeed())
+        api.rotateAdminKey(adm, newAdmin)
+        assertEquals(401, assertFailsWith<ApiException> { api.listUsers(adm) }.code)
+        assertTrue(api.listUsers(newAdmin).any { it.second == "superadmin" && it.first.contentEquals(newAdmin.publicKey) })
+        val log = api.adminLog(newAdmin)
+        assertEquals("rotate_key", log.first().first); assertEquals(64, log.first().third.size)
+        assertEquals("add_user", log.last().first)
+    }
+
     @Test fun removed_user_is_cut_off_from_the_server_but_can_still_write_until_mailboxes_are_rotated() {
         val (a, b, adm) = fresh(); meet(a, "Bob", b, "Alice")
         ServerApi(b.base, Transport.direct()).removeUser(adm, b.key)

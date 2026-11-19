@@ -15,4 +15,9 @@ if [ ! -f "$NOC_DB_PATH" ]; then
   echo
 fi
 # the key is typed into the server's own prompt and never written to disk
-exec tmux new-session -s noc "NOC_HOST='$NOC_HOST' NOC_DB_PATH='$NOC_DB_PATH' .venv/bin/python -m app.cli serve --host ${NOC_HOST:-0.0.0.0} --port 8443; echo 'server stopped, press Enter'; read"
+RUNAS=""
+if [ -n "${NOC_RUN_AS:-}" ]; then   # run as the unprivileged service user: it can touch only /var/lib/noc
+  export NOC_DB_PATH="/var/lib/noc/noc.db"
+  RUNAS="setpriv --reuid=$NOC_RUN_AS --regid=$NOC_RUN_AS --clear-groups --no-new-privs"
+fi
+exec tmux new-session -s noc "$RUNAS env NOC_HOST='$NOC_HOST' NOC_DB_PATH='$NOC_DB_PATH' NOC_DB_KEY_FILE='${NOC_DB_KEY_FILE:-}' .venv/bin/python -m app.cli serve --host ${NOC_HOST:-0.0.0.0} --port 8443; echo 'server stopped, press Enter'; read"

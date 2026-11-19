@@ -2,7 +2,7 @@
 # The server itself listens on 127.0.0.1 only (see linux-run.sh: --host 127.0.0.1).
 DataDirectory /var/lib/tor
 Log notice file /var/log/tor/notices.log
-SocksPort 0                      # the server makes no outgoing connections through Tor itself here
+SocksPort 127.0.0.1:9050            # only for apt and other updates: everything leaves the phone through Tor
 ControlPort 0
 HiddenServiceDir /var/lib/tor/noc_service
 HiddenServiceVersion 3

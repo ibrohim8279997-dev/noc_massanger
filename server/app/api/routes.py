@@ -4,6 +4,8 @@ import logging
 from collections import defaultdict
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+from nacl.exceptions import BadSignatureError
+from nacl.signing import VerifyKey
 from pydantic import BaseModel, Field
 
 from ..auth import authenticate
@@ -79,18 +81,49 @@ async def list_users(request: Request, _: bytes = Depends(superadmin)):
 
 @router.put("/admin/users/{pubkey}", status_code=204)
 async def put_user(pubkey: str, body: RoleIn, request: Request, _: bytes = Depends(superadmin)):
-    if not request.app.state.store.add_user(b64d(pubkey, 32), body.role):
+    pub = b64d(pubkey, 32)
+    if not request.app.state.store.add_user(pub, body.role):
         raise HTTPException(409)
+    request.app.state.store.log_admin("add_user", pub, b64d(request.headers["x-sig"], 64))
     log.info("user added or role changed")
     return Response(status_code=204)
 
 
 @router.delete("/admin/users/{pubkey}", status_code=204)
 async def delete_user(pubkey: str, request: Request, _: bytes = Depends(superadmin)):
-    if not request.app.state.store.delete_user(b64d(pubkey, 32)):
+    pub = b64d(pubkey, 32)
+    if not request.app.state.store.delete_user(pub):
         raise HTTPException(404)
+    request.app.state.store.log_admin("remove_user", pub, b64d(request.headers["x-sig"], 64))
     log.info("user removed")
     return Response(status_code=204)
+
+
+class RotateIn(BaseModel):
+    new_pubkey: str = Field(min_length=43, max_length=43)
+    proof: str = Field(min_length=86, max_length=86)        # signature BY THE NEW KEY: proves it is held, not just typed in
+
+
+@router.post("/admin/rotate-key", status_code=204)
+async def rotate_key(body: RotateIn, request: Request, old: bytes = Depends(superadmin)):
+    """Change of the administrator's key: signed by the old key (request signature) and proven by the new one."""
+    new = b64d(body.new_pubkey, 32)
+    if new == old:
+        raise HTTPException(409)
+    try:
+        VerifyKey(new).verify(b"NOC1-ROTATE\n" + old + new, b64d(body.proof, 64))
+    except BadSignatureError:
+        raise HTTPException(400, "bad proof")
+    if not request.app.state.store.rotate_superadmin(old, new):
+        raise HTTPException(409)
+    request.app.state.store.log_admin("rotate_key", new, b64d(request.headers["x-sig"], 64))
+    log.info("administrator key changed")
+    return Response(status_code=204)
+
+
+@router.get("/admin/log")
+async def admin_log(request: Request, _: bytes = Depends(superadmin)):
+    return [{"action": a, "target": b64e(t), "sig": b64e(g)} for a, t, g in request.app.state.store.admin_log()]
 
 
 # ---------------------------------------------------------------- prekeys

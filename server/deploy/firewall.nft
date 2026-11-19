@@ -1,0 +1,23 @@
+#!/usr/sbin/nft -f
+# NOC server firewall: default DROP both ways, no exceptions.
+#  - inbound: nothing from outside. The onion service works over OUTBOUND circuits made by Tor itself.
+#  - outbound: only the Tor process (user debian-tor) may talk to the network. Everything else, including
+#    system updates (apt goes through the Tor SOCKS port, see apt-tor.conf), is dropped.
+#  - no SSH, no Tailscale, no DNS, no NTP from this host.
+flush ruleset
+table inet noc {
+  chain input {
+    type filter hook input priority 0; policy drop;
+    iif "lo" accept
+    ct state established,related accept
+  }
+  chain forward {
+    type filter hook forward priority 0; policy drop;
+  }
+  chain output {
+    type filter hook output priority 0; policy drop;
+    oif "lo" accept
+    ct state established,related accept
+    meta skuid "debian-tor" accept
+  }
+}

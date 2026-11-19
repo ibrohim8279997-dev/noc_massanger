@@ -30,6 +30,11 @@ CREATE TABLE IF NOT EXISTS one_time_prekeys(
   owner BLOB NOT NULL REFERENCES devices(pubkey) ON DELETE CASCADE,
   data BLOB NOT NULL);
 CREATE INDEX IF NOT EXISTS otp_owner ON one_time_prekeys(owner);
+CREATE TABLE IF NOT EXISTS admin_log(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  action TEXT NOT NULL CHECK(action IN ('add_user','remove_user','rotate_key')),
+  target BLOB NOT NULL CHECK(length(target)=32),
+  sig BLOB NOT NULL CHECK(length(sig)=64));
 """
 
 
@@ -68,6 +73,25 @@ class Store:
             if c.execute("SELECT 1 FROM devices WHERE role='superadmin'").fetchone():
                 return False
             c.execute("INSERT OR REPLACE INTO devices(pubkey, role) VALUES(?, 'superadmin')", (pub,))
+            return True
+
+    def log_admin(self, action: str, target: bytes, sig: bytes) -> None:
+        """Keeps the administrator's own signature next to each action (no time, no address: minimum metadata)."""
+        with self._tx() as c:
+            c.execute("INSERT INTO admin_log(action, target, sig) VALUES(?, ?, ?)", (action, target, sig))
+
+    def admin_log(self, limit: int = 200):
+        with self._lock:
+            rows = self.conn.execute("SELECT action, target, sig FROM admin_log ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        return [(a, bytes(t), bytes(g)) for a, t, g in rows]
+
+    def rotate_superadmin(self, old: bytes, new: bytes) -> bool:
+        """Replaces the single superadmin key. The record is replaced atomically; the old key stops working at once."""
+        with self._tx() as c:
+            if not c.execute("SELECT 1 FROM devices WHERE pubkey=? AND role='superadmin'", (old,)).fetchone():
+                return False
+            c.execute("DELETE FROM devices WHERE pubkey=?", (old,))
+            c.execute("INSERT OR REPLACE INTO devices(pubkey, role) VALUES(?, 'superadmin')", (new,))
             return True
 
     def reset_superadmin(self):

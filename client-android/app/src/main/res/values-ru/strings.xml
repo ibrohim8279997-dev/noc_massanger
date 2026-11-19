@@ -121,4 +121,6 @@
     <string name="protect_cover">Маскирующий трафик с постоянной скоростью</string>
     <string name="server_change">Сменить адрес сервера</string>
     <string name="server_changed">Переподключение. Ключи и контакты сохранены.</string>
+    <string name="admin_rotate">Сменить ключ администратора</string>
+    <string name="admin_rotated">Ключ администратора сменён. Старый больше не работает.</string>
 </resources>

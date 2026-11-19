@@ -434,6 +434,11 @@ private fun startRecording(ctx: android.content.Context): Pair<MediaRecorder, Fi
     Page(stringResource(R.string.admin_title), onBack = { a.ui.screen = Screen.Contacts }) { Scrolling {
         PrimaryButton(stringResource(R.string.admin_add), { scan.launch(ScanOptions().setOrientationLocked(false).setBeepEnabled(false)) })
         SecondaryButton(stringResource(R.string.admin_users), { a.withAdmin { s -> users = a.app.messenger!!.api.listUsers(s) } })
+        SecondaryButton(stringResource(R.string.admin_rotate), { a.withAdmin { old ->
+            val seed = noc.crypto.SeedSigner.newSeed(); val fresh = noc.crypto.SeedSigner(seed)
+            a.app.messenger!!.api.rotateAdminKey(old, fresh)
+            a.app.vault.store("admin", "noc_admin", seed); seed.fill(0); info = R.string.admin_rotated
+        } })
         info?.let { Text(stringResource(it), color = pal.ok) }
         users.forEach { (k, role) ->
             Card { Row(verticalAlignment = Alignment.CenterVertically) {

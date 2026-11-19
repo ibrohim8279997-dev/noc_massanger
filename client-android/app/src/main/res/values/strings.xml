@@ -121,4 +121,6 @@
     <string name="protect_cover">Constant-rate cover traffic</string>
     <string name="server_change">Change server address</string>
     <string name="server_changed">Reconnecting. Keys and contacts are kept.</string>
+    <string name="admin_rotate">Change administrator key</string>
+    <string name="admin_rotated">Administrator key changed. The old key no longer works.</string>
 </resources>

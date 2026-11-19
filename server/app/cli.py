@@ -3,7 +3,6 @@ import argparse
 import secrets
 import sys
 
-import uvicorn
 
 from .admin.bind import BindState
 from .config import ENVELOPE_SIZE, Settings, from_env
@@ -40,6 +39,7 @@ def main():
     if needs_admin:
         # printed to the console of this phone only, never to a logger or file
         print("ONE-TIME BINDING TOKEN (enter it in the app):\n" + bind.issue(), file=sys.stdout, flush=True)
+    import uvicorn
     app = create_app(settings, bind)
     uvicorn.run(app, host=a.host, port=a.port, access_log=False, log_config=None)
 

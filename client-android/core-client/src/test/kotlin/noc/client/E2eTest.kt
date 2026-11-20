@@ -155,6 +155,25 @@ class Stage2E2eTest {
         } finally { stop.set(true); ta.join(); tb.join() }
     }
 
+    @Test fun the_server_database_holds_no_readable_message_or_file_text_checked_with_the_owner_script() {
+        val (s, ph) = world(2); val (a, b) = ph
+        meet(a, "Bob", b, "Alice")
+        val bob = a.storage.contacts().single()
+        val words = listOf("СЕКРЕТНОЕ-СЛОВО-7391", "FILE-CONTENT-MARKER-4482", "voice-marker-9917")
+        a.m.sendText(bob, "привет, ${words[0]}, как дела")
+        a.m.sendFile(bob, "начало ${words[1]} конец".toByteArray().let { it + ByteArray(20_000) { i -> (i % 7).toByte() } }, "${words[2]}.txt", false)
+        // nobody polls: the packets stay on the server, exactly the state an operator could look at
+        val wordsFile = java.io.File.createTempFile("words", ".txt").also { it.writeText(words.joinToString("\n"), Charsets.UTF_8) }     // UTF-8 file: arguments would mangle Cyrillic
+        val pb = ProcessBuilder(ServerProc.python(), java.io.File(ServerProc.repoRoot(), "tools/verify_server_blind.py").path, s.dbPath, "--words-file", wordsFile.path)
+            .redirectErrorStream(true); pb.environment()["NOC_DB_KEY"] = "ab".repeat(32)
+        val out = pb.start().let { p -> val t = p.inputStream.bufferedReader(Charsets.UTF_8).readText(); p.waitFor(); t }
+        assertTrue(out.contains("packets waiting on the server:"), out)
+        words.forEach { assertTrue(out.contains("'$it': not found anywhere"), "the server can see '$it'\n$out") }
+        assertFalse(out.contains("FOUND"), out)
+        assertTrue(Regex("lowest entropy ([0-9.]+)").find(out)!!.groupValues[1].toDouble() > 7.9, out)       // the packets look like random bytes
+        assertTrue(out.contains("every one the same length"), out)
+    }
+
     @Test fun sender_is_anonymous_to_the_server_no_identity_headers_on_sends() {
         // sending must work with a client that has no signer registered at all for sending: use a bare ServerApi
         val (s, ph) = world(2); val (a, b) = ph

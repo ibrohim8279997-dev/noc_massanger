@@ -44,7 +44,7 @@ class MemoryStorage : Storage {
 }
 
 /** Starts the real Python server from ../../server in a child process. */
-class ServerProc private constructor(val baseUrl: String, val bindToken: String, private val proc: Process, val output: StringBuffer) : AutoCloseable {
+class ServerProc private constructor(val baseUrl: String, val bindToken: String, private val proc: Process, val output: StringBuffer, val dbPath: String = "") : AutoCloseable {
     override fun close() { proc.destroy(); proc.waitFor() }
 
     companion object {
@@ -54,6 +54,8 @@ class ServerProc private constructor(val baseUrl: String, val bindToken: String,
             return null
         }
         fun available() = repoServerDir() != null
+        fun python(): String = File(repoServerDir()!!, ".venv/bin/python").path
+        fun repoRoot(): File = repoServerDir()!!.parentFile
 
         fun start(extraEnv: Map<String, String> = emptyMap(), extraArgs: List<String> = emptyList()): ServerProc {
             val dir = repoServerDir()!!
@@ -73,7 +75,7 @@ class ServerProc private constructor(val baseUrl: String, val bindToken: String,
                 try { http.newCall(okhttp3.Request.Builder().url("$base/x").build()).execute().close(); break } catch (e: Exception) { Thread.sleep(150) }
             }
             while (token.get() == null && System.currentTimeMillis() < deadline) Thread.sleep(50)
-            return ServerProc(base, token.get() ?: error("server did not print a token: $out"), proc, out)
+            return ServerProc(base, token.get() ?: error("server did not print a token: $out"), proc, out, File(tmp, "noc.db").path)
         }
     }
 }

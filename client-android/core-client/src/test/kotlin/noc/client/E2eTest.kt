@@ -137,6 +137,24 @@ class Stage2E2eTest {
         } finally { stop.set(true); ta.join(); tb.join() }
     }
 
+    @Test fun a_five_megabyte_file_goes_through_the_real_server_path_which_used_to_overflow_the_manifest() {
+        val s = ServerProc.start(mapOf("NOC_PUT_RATE" to "1000000")); servers.add(s)      // the test pushes chunks far faster than any real rhythm
+        val ph = List(2) { Phone(s.baseUrl).also { p -> p.m.groupJitterMs = 0 } }; setupAdmin(s, *ph.toTypedArray()); ph.forEach { it.m.sync() }
+        val (a, b) = ph
+        meet(a, "Bob", b, "Alice")
+        val ca = a.m.startCover({ CoverMode.PARANOID }, activePeriodMs = 5, paranoidPeriodMs = 5)
+        val cb = b.m.startCover({ CoverMode.PARANOID }, activePeriodMs = 5, paranoidPeriodMs = 5)
+        val stop = java.util.concurrent.atomic.AtomicBoolean(false)
+        val ta = Thread { ca.run({ stop.get() }) }.also { it.start() }; val tb = Thread { cb.run({ stop.get() }) }.also { it.start() }
+        try {
+            val bob = a.storage.contacts().single(); val alice = b.storage.contacts().single()
+            val data = ByteArray(5 * 1024 * 1024).also { java.util.Random(7).nextBytes(it) }
+            a.m.sendFile(bob, data, "five.bin", false)
+            waitFor(120_000) { b.storage.messages(alice.id).any { it.hasFile } }
+            assertContentEquals(data, b.storage.messageFile(b.storage.messages(alice.id).first { it.hasFile }.id))
+        } finally { stop.set(true); ta.join(); tb.join() }
+    }
+
     @Test fun sender_is_anonymous_to_the_server_no_identity_headers_on_sends() {
         // sending must work with a client that has no signer registered at all for sending: use a bare ServerApi
         val (s, ph) = world(2); val (a, b) = ph

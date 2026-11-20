@@ -125,7 +125,13 @@
     <string name="admin_rotated">Ключ администратора сменён. Старый больше не работает.</string>
     <string name="section_mesh">Mesh (без сети)</string>
     <string name="mesh_switch">Передавать сообщения от телефона к телефону</string>
-    <string name="mesh_note">Ваш телефон переносит чужие запечатанные сообщения по Bluetooth и забывает их после передачи, прочитать их он не может. Работает только с людьми вашего круга. Небольшие файлы (до 200 КБ) идут по mesh. На устройствах пока не проверялось.</string>
     <string name="mesh_status">Соседей: %1$d, переносится: %2$d</string>
     <string name="mesh_perm">Для mesh нужно разрешение Bluetooth.</string>
+    <string name="mesh_note">Ваш телефон переносит чужие запечатанные сообщения по Bluetooth и забывает их после передачи, прочитать их он не может. Работает только с людьми вашего круга. На устройствах пока не проверялось.</string>
+    <string name="mesh_files">Отправлять файлы по mesh</string>
+    <string name="mesh_files_note">Файлы идут от телефона к телефону, а не через сервер (до 200 КБ по Bluetooth, до 20 МБ с быстрой связью ниже). Медленно, но работает без сети.</string>
+    <string name="mesh_wifi">Быстрая связь: Wi-Fi Direct</string>
+    <string name="mesh_wifi_note">Намного быстрее для больших файлов. Цена для приватности: пока включено, Wi-Fi Direct показывает имя вашего телефона людям рядом. На устройствах пока не проверялось.</string>
+    <string name="mesh_nearby">Быстрая связь: Nearby Connections</string>
+    <string name="mesh_nearby_note">Нужны сервисы Google Play, радио управляет код Google. Сообщения остаются зашифрованными сквозным шифрованием, но на этом канале вы полагаетесь на Google. На устройствах пока не проверялось.</string>
 </resources>

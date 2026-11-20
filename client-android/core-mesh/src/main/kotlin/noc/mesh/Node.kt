@@ -87,24 +87,30 @@ class MeshNode(
 
     @Synchronized fun end(peer: String) { encounters.remove(peer) }
 
-    @Synchronized fun handle(peer: String, msg: MeshMsg): List<MeshMsg> {
-        val enc = encounters[peer] ?: return emptyList()
+    /**
+     * NOT synchronized as a whole: the delivery callback ([onDeliver] talks to the messenger, which has its own lock and calls
+     * back into [inject]) must never run while this node's lock is held, or the two could wait for each other forever.
+     */
+    fun handle(peer: String, msg: MeshMsg): List<MeshMsg> {
+        val enc = synchronized(this) { encounters[peer] } ?: return emptyList()
         if (enc.dead) return emptyList()
         return when (msg) {
-            is MeshMsg.Hello -> {
+            is MeshMsg.Hello -> synchronized(this) {
                 val (have, need) = msg.hashes.partition { known(it) }
                 // what we already hold (or have already handled) is acknowledged right away, so the offering side may let go of it
                 listOf<MeshMsg>(MeshMsg.Want(need.take(limits.perEncounterIn))) + have.take(limits.perEncounterIn).map { MeshMsg.Ack(it) }
             }
-            is MeshMsg.Want -> msg.hashes.mapNotNull { hh ->
-                val e = entries[hh] ?: return@mapNotNull null
-                if (e.handoffs >= limits.fanout || e.hops >= limits.maxHops || nowMin() >= e.expiryMin) return@mapNotNull null
-                val raw = store.get(e.id) ?: return@mapNotNull null
-                enc.sent++
-                MeshMsg.Env(MeshEnvelope.withHops(raw, e.hops + 1))
+            is MeshMsg.Want -> synchronized(this) {
+                msg.hashes.mapNotNull { hh ->
+                    val e = entries[hh] ?: return@mapNotNull null
+                    if (e.handoffs >= limits.fanout || e.hops >= limits.maxHops || nowMin() >= e.expiryMin) return@mapNotNull null
+                    val raw = store.get(e.id) ?: return@mapNotNull null
+                    enc.sent++
+                    MeshMsg.Env(MeshEnvelope.withHops(raw, e.hops + 1))
+                }
             }
             is MeshMsg.Env -> receive(enc, msg.envelope)
-            is MeshMsg.Ack -> { ack(msg.hash); emptyList() }
+            is MeshMsg.Ack -> { synchronized(this) { ack(msg.hash) }; emptyList() }
         }
     }
 
@@ -112,15 +118,20 @@ class MeshNode(
 
     private fun receive(enc: Encounter, raw: ByteArray): List<MeshMsg> {
         fun strike(): List<MeshMsg> { if (++enc.strikes >= limits.strikesToDrop) enc.dead = true; return emptyList() }
-        if (++enc.received > limits.perEncounterIn) return strike()
-        val e = MeshEnvelope.parse(raw) ?: return strike()
-        if (!MeshEnvelope.verify(e, circle)) return strike()                 // forged, tampered or from outside the circle
-        if (nowMin() >= e.expiryMin || e.expiryMin > nowMin() + limits.ttlMinutes + 5) return strike()   // expired, or a ttl longer than we allow
-        if (e.hops > limits.maxHops) return strike()
-        val hh = h(e.id)
-        if (known(hh)) return listOf(MeshMsg.Ack(hh))                         // already handled: acknowledge so the sender can let go
-        val mine = try { onDeliver(e.body) } catch (ex: Exception) { false }
-        if (mine) tomb(hh) else keep(e, raw)                                  // for us: consume, keep nothing. Otherwise carry it on.
+        val e: MeshEnvelope; val hh: Long
+        synchronized(this) {                                                        // phase 1: look only
+            if (++enc.received > limits.perEncounterIn) return strike()
+            e = MeshEnvelope.parse(raw) ?: return strike()
+            if (!MeshEnvelope.verify(e, circle)) return strike()                    // forged, tampered or from outside the circle
+            if (nowMin() >= e.expiryMin || e.expiryMin > nowMin() + limits.ttlMinutes + 5) return strike()   // expired, or a ttl longer than we allow
+            if (e.hops > limits.maxHops) return strike()
+            hh = h(e.id)
+            if (known(hh)) return listOf(MeshMsg.Ack(hh))                           // already handled: acknowledge so the sender can let go
+        }
+        val mine = try { onDeliver(e.body) } catch (ex: Exception) { false }        // phase 2: OUTSIDE the lock (decrypts, writes the chat)
+        synchronized(this) {                                                        // phase 3: record
+            if (!known(hh)) { if (mine) tomb(hh) else keep(e, raw) }                // for us: consume, keep nothing. Otherwise carry it on.
+        }
         return listOf(MeshMsg.Ack(hh))
     }
 

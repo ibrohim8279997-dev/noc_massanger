@@ -226,15 +226,20 @@ class MainActivity : AppCompatActivity() {
         if (r.values.all { it }) startMesh() else { app.db?.setSetting("mesh", "off"); ui.error = getString(R.string.mesh_perm) }
     }
 
-    /** Called from Settings when the switch is turned on (asks for Bluetooth permissions first). */
+    /** Called from Settings when mesh (or a fast link) is switched on: asks for exactly the permissions the chosen transports need. */
     fun enableMesh() {
-        val need = arrayOf(android.Manifest.permission.BLUETOOTH_SCAN, android.Manifest.permission.BLUETOOTH_ADVERTISE, android.Manifest.permission.BLUETOOTH_CONNECT)
-        if (need.all { checkSelfPermission(it) == android.content.pm.PackageManager.PERMISSION_GRANTED }) startMesh() else meshPerms.launch(need)
+        val db = app.db ?: return
+        val need = mutableListOf(android.Manifest.permission.BLUETOOTH_SCAN, android.Manifest.permission.BLUETOOTH_ADVERTISE, android.Manifest.permission.BLUETOOTH_CONNECT)
+        if (db.setting("mesh_wifi", "off") == "on" || db.setting("mesh_nearby", "off") == "on")
+            need += if (android.os.Build.VERSION.SDK_INT >= 33) android.Manifest.permission.NEARBY_WIFI_DEVICES else android.Manifest.permission.ACCESS_FINE_LOCATION
+        if (need.all { checkSelfPermission(it) == android.content.pm.PackageManager.PERMISSION_GRANTED }) startMesh() else meshPerms.launch(need.toTypedArray())
     }
     fun disableMesh() { mesh?.stop(); mesh = null }
+    /** After a transport switch: stop and start again with the new set. */
+    fun restartMesh() { disableMesh(); if (app.db?.setting("mesh", "off") == "on") enableMesh() }
     private fun startMesh() {
-        val m = app.messenger ?: return
-        if (mesh == null) mesh = noc.app.mesh.MeshController(this, m).also { it.start() }
+        val m = app.messenger ?: return; val db = app.db ?: return
+        if (mesh == null) mesh = noc.app.mesh.MeshController(this, m, wifi = db.setting("mesh_wifi", "off") == "on", nearby = db.setting("mesh_nearby", "off") == "on").also { it.start() }
     }
 
     private fun torLine(): String? = when (app.tor.state.get()) {
@@ -263,9 +268,8 @@ class MainActivity : AppCompatActivity() {
         val data = contentResolver.openInputStream(uri)!!.use { it.readNBytes(limit + 1) }
         if (data.size > limit) { ui.error = getString(R.string.too_large); return@io }
         val name = contentResolver.query(uri, null, null, null, null)?.use { if (it.moveToFirst()) it.getString(it.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME)) else null } ?: "file"
-        val mesh = this.mesh
-        if (mesh != null && data.size <= 200 * 1024) app.messenger!!.sendFileMesh(c, data, name, false)      // offline-friendly small chunks
-        else app.messenger!!.sendFile(c, data, name, false)
+        val viaMesh = this.mesh != null && app.db!!.setting("mesh_files", "off") == "on"      // the user chose "send files over mesh"
+        if (!(viaMesh && app.messenger!!.sendFileMesh(c, data, name, false))) app.messenger!!.sendFile(c, data, name, false)
         ui.tick++
     }
 

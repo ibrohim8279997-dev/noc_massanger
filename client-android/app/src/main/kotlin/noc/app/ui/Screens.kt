@@ -418,6 +418,17 @@ private fun startRecording(ctx: android.content.Context): Pair<MediaRecorder, Fi
                         Switch(on, { on = it; db.setSetting("mesh", if (it) "on" else "off"); if (it) a.enableMesh() else a.disableMesh() })
                     }
                     Text(stringResource(R.string.mesh_note), color = pal.sub, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+                    @Composable fun toggle(key: String, label: Int, note: Int) {
+                        var v by remember { mutableStateOf(db.setting(key, "off") == "on") }
+                        Row(Modifier.padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(stringResource(label), color = pal.text, modifier = Modifier.weight(1f))
+                            Switch(v, { v = it; db.setSetting(key, if (it) "on" else "off"); if (key != "mesh_files") a.restartMesh() }, enabled = on)
+                        }
+                        Text(stringResource(note), color = pal.sub, fontSize = 12.sp)
+                    }
+                    toggle("mesh_files", R.string.mesh_files, R.string.mesh_files_note)
+                    toggle("mesh_wifi", R.string.mesh_wifi, R.string.mesh_wifi_note)
+                    toggle("mesh_nearby", R.string.mesh_nearby, R.string.mesh_nearby_note)
                     if (on) a.mesh?.let { Text(stringResource(R.string.mesh_status, it.neighbours, it.held), color = pal.text, modifier = Modifier.padding(top = 8.dp)) }
                 }
                 if (a.hasAdmin()) { section(R.string.section_admin); SecondaryButton(stringResource(R.string.admin_open), { a.ui.screen = Screen.Admin }) }

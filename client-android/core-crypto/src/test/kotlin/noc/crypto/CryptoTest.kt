@@ -159,7 +159,7 @@ class FileTest {
 
     @Test fun whole_file_checksum_is_enforced() {
         val (m, chunks) = FileCrypto.encrypt(data(5_000))
-        val forged = FileManifest(m.fileId, m.key, m.size, m.count, m.chunkHashes, ByteArray(32), m.voice, m.name)
+        val forged = FileManifest(m.fileId, m.key, m.size, m.count, ByteArray(32), m.voice, m.name)
         val a = FileAssembler(forged); a.accept(0, chunks[0])
         assertFailsWith<MalformedException> { a.finish() }
     }
@@ -272,5 +272,30 @@ class RefillTest {
         Conversation(b, aAddr).open(ab.seal(Inner(Kind.TEXT, key32(), 0, 0, "x".toByteArray())))
         assertEquals(2, b.oneTimeKeys().size); b.refill(10); assertEquals(10, b.oneTimeKeys().size)
         assertEquals(10, b.oneTimeKeys().map { it.id }.toSet().size)
+    }
+}
+
+class BigFileTest {
+    @Test fun manifest_size_does_not_depend_on_file_size() {
+        val small = FileCrypto.encrypt(ByteArray(10), "a").first.serialize().size
+        val big = FileCrypto.encrypt(ByteArray(3_000_000), "a").first.serialize().size
+        assertEquals(small, big); assertTrue(big < 200)
+    }
+
+    @Test fun a_twenty_megabyte_file_travels_as_small_messages_and_comes_back_intact() {
+        val data = ByteArray(20 * 1024 * 1024).also { rnd.nextBytes(it) }
+        val (m, chunks) = FileCrypto.encrypt(data, "huge.bin")
+        assertEquals(1_907, chunks.size)                                                   // ceil(20 MiB / 11000)
+        assertTrue(chunks.all { it.size <= FileCrypto.CHUNK_SIZE + 16 + 32 })
+        val a = FileAssembler(FileManifest.parse(m.serialize())); chunks.shuffled().forEachIndexed { _, c -> }
+        chunks.forEachIndexed { i, c -> assertTrue(a.accept(i, c)) }
+        assertContentEquals(data, a.finish())
+    }
+
+    @Test fun the_chunk_checksum_travelling_with_the_chunk_is_enforced_even_if_gcm_would_pass() {
+        val (m, chunks) = FileCrypto.encrypt(ByteArray(5000) { it.toByte() }); val a = FileAssembler(m)
+        val noHash = chunks[0].copyOf(chunks[0].size - 32) + ByteArray(32)                  // right ciphertext, wrong checksum
+        assertFalse(a.accept(0, noHash)); assertFalse(a.accept(0, chunks[0].copyOf(40)))
+        assertTrue(a.accept(0, chunks[0]))
     }
 }

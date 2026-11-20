@@ -12,7 +12,7 @@ class Settings:
     db_path: str
     db_key_hex: str                    # 32 random bytes as hex; never stored next to the DB
     packet_ttl_s: int = 7 * 86400
-    mailbox_max_packets: int = 1000
+    mailbox_max_packets: int = 2500       # about 41 MB: a 20 MB file (1907 chunks) can wait for an offline receiver
     max_mailboxes_per_device: int = 20
     max_one_time_prekeys: int = 100
     prekey_blob_max: int = 8192
@@ -41,6 +41,8 @@ def from_env() -> Settings:
         db_path=os.environ.get("NOC_DB_PATH", "noc.db"),
         db_key_hex=read_db_key(),
         packet_ttl_s=int(os.environ.get("NOC_PACKET_TTL_S", 7 * 86400)),
+        put_rate_per_min=int(os.environ.get("NOC_PUT_RATE", 120)),
+        mailbox_max_packets=int(os.environ.get("NOC_MAILBOX_MAX", 2500)),
     )
 
 # Constant-size exchange slot (cover traffic): every request and every response has exactly these sizes.

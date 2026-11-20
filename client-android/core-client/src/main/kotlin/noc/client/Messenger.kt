@@ -15,7 +15,8 @@ private fun ByteArray.hex() = joinToString("") { "%02x".format(it) }
 private const val MAX_FILE = 20 * 1024 * 1024
 private const val DAY = 86_400_000L
 private const val MESH_MAX_BODY = 3960      // what fits in a 4096-byte mesh envelope
-private const val MESH_CHUNK = 1800        // file chunk size over mesh (small radio packets)
+private const val MESH_CHUNK = 1700        // file chunk size over mesh: a first (PreKey) message must still fit a 4096-byte envelope
+private const val MESH_WINDOW = 32         // chunks in flight at a time: the relay buffers are small, so big files move in windows
 
 /** Glue between storage, crypto and server. All calls block: run them off the main thread. */
 class Messenger(private val db: Storage, val api: ServerApi) {
@@ -35,6 +36,10 @@ class Messenger(private val db: Storage, val api: ServerApi) {
     @Volatile var onChange: () -> Unit = {}
     /** Set when mesh mode is on: gets the raw Signal ciphertext of every outgoing message (a second, offline path to the recipient). */
     @Volatile var meshOut: ((ByteArray) -> Unit)? = null
+    /** Largest file sent over the mesh. Small by default (slow Bluetooth); raised when a fast link (Wi-Fi Direct / Nearby) is on. */
+    @Volatile var meshFileLimit: Int = 200 * 1024
+    /** A chunk asked for but not received within this time is asked for again. */
+    @Volatile var needRetryMs: Long = 30_000
 
     /** Secret shared by the circle (travels inside the QR when people meet). Used by the mesh to recognise members and to rotate advertisements. */
     val circleKey: ByteArray get() = blob("circle_key", 32)
@@ -167,28 +172,40 @@ class Messenger(private val db: Storage, val api: ServerApi) {
     private val outFiles = HashMap<String, OutFile>()          // RAM only; lets us answer "chunk N is missing"
 
     @Synchronized fun sendFileMesh(c: Contact, data: ByteArray, name: String, voice: Boolean): Boolean {
-        require(data.size <= MAX_FILE) { "file too large" }
-        if (meshOut == null) return false
+        if (meshOut == null || data.size > minOf(MAX_FILE, meshFileLimit)) return false
         val ttl = autoDeleteS()
         val (m, chunks) = FileCrypto.encrypt(data, name, voice, MESH_CHUNK)
         if (!send(c, Kind.FILE_MANIFEST, m.serialize(), ttl, meshOnly = true)) return false
-        chunks.forEachIndexed { i, ct -> send(c, Kind.FILE_CHUNK, m.fileId + ByteBuffer.allocate(4).putInt(i).array() + ct, ttl, meshOnly = true) }
+        // only the first window goes out now; the receiver asks for the rest as it goes (the carrying buffers are small)
+        for (i in 0 until minOf(chunks.size, MESH_WINDOW)) send(c, Kind.FILE_CHUNK, m.fileId + ByteBuffer.allocate(4).putInt(i).array() + chunks[i], ttl, meshOnly = true)
+        if (outFiles.size >= 8) outFiles.remove(outFiles.keys.first())
         outFiles[m.fileId.hex()] = OutFile(c.id, chunks, m.fileId, ttl)
         db.addMessage(c.id, true, Kind.FILE_MANIFEST.code, null, data, name, voice, System.currentTimeMillis(), expiry(ttl))
         return true
     }
 
-    /** Receiver side: for every unfinished file ask the sender for the chunks that are still missing. Returns how many requests were sent. */
+    private val requested = HashMap<String, Long>()          // "fileId:index" -> when we asked (RAM only)
+
+    /**
+     * Receiver side: keep at most [MESH_WINDOW] chunks outstanding per file and ask the sender for the next ones.
+     * Chunks asked for but missing for longer than [needRetryMs] are asked for again. Returns how many requests were sent.
+     */
     @Synchronized fun requestMissingChunks(): Int {
-        var n = 0
+        var n = 0; val now = System.currentTimeMillis()
         for (idHex in db.keys("manifest")) {
             val man = try { FileManifest.parse(db.get("manifest", idHex) ?: continue) } catch (e: MalformedException) { continue }
             val contact = db.contact(String(db.get("manifest_meta", idHex) ?: continue).split(":")[0].toLong()) ?: continue
             val missing = (0 until man.count).filter { db.get("chunk", "$idHex:$it") == null }
             if (missing.isEmpty()) continue
-            val payload = ByteBuffer.allocate(16 + 2 + 4 * minOf(missing.size, 200)).put(man.fileId).putShort(minOf(missing.size, 200).toShort()).also { b -> missing.take(200).forEach { b.putInt(it) } }.array()
+            fun outstanding(i: Int) = requested["$idHex:$i"]?.let { now - it < needRetryMs } == true
+            val free = MESH_WINDOW - missing.count { outstanding(it) }
+            val pick = missing.filter { !outstanding(it) }.take(free)
+            if (pick.isEmpty()) continue
+            val payload = ByteBuffer.allocate(16 + 2 + 4 * pick.size).put(man.fileId).putShort(pick.size.toShort()).also { b -> pick.forEach { b.putInt(it) } }.array()
+            pick.forEach { requested["$idHex:$it"] = now }
             if (send(contact, Kind.FILE_NEED, payload, 0)) n++
         }
+        if (requested.size > 20_000) requested.clear()
         return n
     }
 
@@ -262,6 +279,7 @@ class Messenger(private val db: Storage, val api: ServerApi) {
                 val man = FileManifest.parse(m.payload)
                 if (man.size > MAX_FILE) return
                 db.put("manifest", man.fileId.hex(), m.payload); db.put("manifest_meta", man.fileId.hex(), "${c.id}:$exp".toByteArray())
+                (0 until minOf(man.count, MESH_WINDOW)).forEach { requested["${man.fileId.hex()}:$it"] = System.currentTimeMillis() }   // the sender pushes the first window by itself
                 assemble(man.fileId.hex())
             } catch (e: MalformedException) { }
             Kind.FILE_CHUNK -> {

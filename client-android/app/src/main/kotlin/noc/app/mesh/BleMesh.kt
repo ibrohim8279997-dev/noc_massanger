@@ -20,7 +20,7 @@ import java.util.UUID
  * Android itself rotates the random BLE address of an advertiser; the app cannot set or read it.
  */
 @SuppressLint("MissingPermission")   // the caller checks BLUETOOTH_* permissions before start()
-class BleMesh(private val ctx: Context, private val node: MeshNode, circleKey: ByteArray, private val clock: () -> Long = System::currentTimeMillis) {
+class BleMesh(private val ctx: Context, private val node: MeshNode, private val circleKey: ByteArray, private val clock: () -> Long = System::currentTimeMillis) {
     private val planner = AdvertPlanner(MeshCircle(circleKey))
     private val rnd = SecureRandom()
     private val main = Handler(Looper.getMainLooper())
@@ -97,20 +97,20 @@ class BleMesh(private val ctx: Context, private val node: MeshNode, circleKey: B
         override fun onNotificationSent(dev: BluetoothDevice, status: Int) { links[dev.address]?.sent() }
     }
 
-    /** One encounter with one neighbour. Frames: 0xF0 | fragment, or an encoded MeshMsg. */
+    /** One Bluetooth connection. All protocol logic is the shared, tested [MeshSession]; this class only moves frames through GATT. */
     private inner class Link(private val handle: String, val central: Boolean) {
-        val label = "peer-" + rnd.nextLong().toString(16)        // throw-away; forgotten at close()
-        var gatt: BluetoothGatt? = null; var peer: BluetoothDevice? = null; var mtu = 23
+        var gatt: BluetoothGatt? = null
+        var peer: BluetoothDevice? = null
+        private var writeChar: BluetoothGattCharacteristic? = null
         private val out = ArrayDeque<ByteArray>(); private var busy = false
-        private var reasm = Fragments.Reassembler()
         private var lastActivity = clock()
-        private var began = false
+        private var session: MeshSession? = null
 
         val clientCb = object : BluetoothGattCallback() {
             override fun onConnectionStateChange(g: BluetoothGatt, status: Int, state: Int) {
                 if (state == BluetoothProfile.STATE_CONNECTED) g.requestMtu(247) else if (state == BluetoothProfile.STATE_DISCONNECTED) { links.remove(handle)?.close() }
             }
-            override fun onMtuChanged(g: BluetoothGatt, m: Int, status: Int) { mtu = m; g.discoverServices() }
+            override fun onMtuChanged(g: BluetoothGatt, m: Int, status: Int) { g.discoverServices() }
             override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
                 val chr = g.services.firstNotNullOfOrNull { s -> s.characteristics.firstOrNull { it.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0 } } ?: return g.disconnect()
                 g.setCharacteristicNotification(chr, true)
@@ -121,14 +121,14 @@ class BleMesh(private val ctx: Context, private val node: MeshNode, circleKey: B
             override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic) { onFrame(c.value) }
             override fun onCharacteristicWrite(g: BluetoothGatt, c: BluetoothGattCharacteristic, status: Int) { sent() }
         }
-        private var writeChar: BluetoothGattCharacteristic? = null
 
-        fun begin() { if (began) return; began = true; neighbours = links.size; queue(node.begin(label)); watchdog() }
-
-        private fun queue(m: MeshMsg) {
-            if (m is MeshMsg.Env) Fragments.split(m.envelope).forEach { out.add(byteArrayOf(0xF0.toByte()) + it) } else out.add(m.encode())
-            pump()
+        fun begin() {
+            if (session != null) return
+            session = MeshSession(node, MeshCircle(circleKey), initiator = central, fragment = true, send = { f -> queue(f) }, onClosed = { main.post { close() } })
+            neighbours = links.size; session!!.start(); watchdog()
         }
+
+        private fun queue(f: ByteArray) { out.add(f); pump() }
 
         private fun pump() {
             if (busy) return; val f = out.removeFirstOrNull() ?: return
@@ -138,22 +138,15 @@ class BleMesh(private val ctx: Context, private val node: MeshNode, circleKey: B
         }
 
         fun sent() { busy = false; pump() }
+        fun onFrame(f: ByteArray) { lastActivity = clock(); session?.onFrame(f) }
 
-        fun onFrame(f: ByteArray) {
-            lastActivity = clock()
-            if (f.isEmpty()) return
-            if (f[0] == 0xF0.toByte()) {
-                if (reasm.add(f.copyOfRange(1, f.size))) reasm.result()?.let { env -> reasm = Fragments.Reassembler(); node.handle(label, MeshMsg.Env(env)).forEach { queue(it) } }
-            } else MeshMsg.decode(f)?.let { m -> node.handle(label, m).forEach { queue(it) } }
-        }
-
-        /** Close the link after a quiet period: an encounter is short. */
+        /** Close after a quiet period: an encounter is short. */
         private fun watchdog() {
-            main.postDelayed({ if (links.containsKey(handle)) { if (clock() - lastActivity > 8_000 && out.isEmpty()) close() else watchdog() } }, 3_000)
+            main.postDelayed({ if (links.containsKey(handle)) { if (clock() - lastActivity > 8_000 && out.isEmpty()) close() else { session?.offer(); watchdog() } } }, 3_000)
         }
 
         fun close() {
-            node.end(label); links.remove(handle)
+            session?.close(); links.remove(handle)
             runCatching { gatt?.close() }; runCatching { peer?.let { server?.cancelConnection(it) } }
             neighbours = links.size
         }

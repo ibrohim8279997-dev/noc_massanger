@@ -47,6 +47,7 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    implementation("com.google.android.gms:play-services-nearby:19.3.0")   // Nearby Connections: optional fast link, off by default
     implementation("com.google.zxing:core:3.5.3")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     testImplementation(kotlin("test"))

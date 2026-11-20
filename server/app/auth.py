@@ -27,6 +27,11 @@ class NonceCache:
         return True
 
 
+def canonical(request: Request, body: bytes) -> bytes:
+    h = request.headers
+    return signing_message(request.method, request.url.path, h["x-ts"], h["x-nonce"], body)
+
+
 async def authenticate(request: Request) -> tuple[bytes, bytes]:
     """Returns (device pubkey, body). Raises uniform 401 on any problem."""
     st = request.app.state

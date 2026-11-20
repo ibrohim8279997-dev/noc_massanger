@@ -7,4 +7,4 @@ dependencies {
     testRuntimeOnly("org.signal:libsignal-server:0.86.5")
     testImplementation(kotlin("test"))
 }
-tasks.test { useJUnitPlatform(); maxHeapSize = "1g" }
+tasks.test { systemProperty("noc.oqs.jni", rootDir.parentFile.resolve("third_party/jni-host/libnocoqs.so").path); useJUnitPlatform(); maxHeapSize = "1g" }

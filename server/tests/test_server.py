@@ -10,6 +10,8 @@ from app.config import ENVELOPE_SIZE, Settings
 from app.logging.setup import RedactFilter
 from app.main import create_app
 
+from app import pq
+
 from .conftest import Dev, b64, envelope
 
 
@@ -22,8 +24,8 @@ def mailbox(env, owner):
 
 # ------------------------------------------------------------ superadmin bind
 def test_bind_token_is_one_time(env):
-    other = Dev()
-    r = env.client.post("/v1/admin/bind", json={"token": env.token, "pubkey": other.pub_s})
+    other = Dev(admin=True)
+    r = env.client.post("/v1/admin/bind", json={"token": env.token, "pubkey": other.pub_s, "pq_pubkey": b64(other.pq[0])})
     assert r.status_code == 404
 
 
@@ -32,10 +34,10 @@ def test_bind_wrong_token_locks_out(tmp_path):
     bind = BindState()
     good = bind.issue()
     with TestClient(create_app(s, bind)) as c:
-        d = Dev()
+        d = Dev(admin=True)
         for _ in range(5):
-            assert c.post("/v1/admin/bind", json={"token": "0" * 64, "pubkey": d.pub_s}).status_code == 404
-        assert c.post("/v1/admin/bind", json={"token": good, "pubkey": d.pub_s}).status_code == 404
+            assert c.post("/v1/admin/bind", json={"token": "0" * 64, "pubkey": d.pub_s, "pq_pubkey": b64(d.pq[0])}).status_code == 404
+        assert c.post("/v1/admin/bind", json={"token": good, "pubkey": d.pub_s, "pq_pubkey": b64(d.pq[0])}).status_code == 404
 
 
 def test_bind_malformed_rejected(env):

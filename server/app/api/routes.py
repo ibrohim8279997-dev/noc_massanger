@@ -8,7 +8,8 @@ from nacl.exceptions import BadSignatureError
 from nacl.signing import VerifyKey
 from pydantic import BaseModel, Field
 
-from ..auth import authenticate
+from .. import pq
+from ..auth import authenticate, canonical
 import os
 import struct
 from ..config import ENVELOPE_SIZE, SLOT_UP, SLOT_DOWN, F_UPLOAD, F_ACK, F_PREKEY, D_HAS_PACKET, D_UNAUTH, D_REJECTED, D_PREKEY, D_NOPREKEY
@@ -34,9 +35,19 @@ async def device(request: Request) -> bytes:
 
 
 async def superadmin(request: Request) -> bytes:
-    pub, _ = await authenticate(request)
-    if request.app.state.store.device_role(pub) != "superadmin":
+    """Administrator = Ed25519 signature AND ML-DSA-65 signature over the same request. Either one failing refuses it."""
+    pub, body = await authenticate(request)
+    st = request.app.state
+    if st.store.device_role(pub) != "superadmin":
         raise HTTPException(403)
+    pk = st.store.admin_pq_key(pub)
+    try:
+        sig = b64d_max(request.headers.get("x-pq-sig", ""), pq.SIG_MAX)
+    except HTTPException:
+        raise HTTPException(401)
+    if pk is None or not pq.available() or not pq.verify(pk, b"NOC1-PQ\n" + canonical(request, body), sig):
+        raise HTTPException(401)
+    request.state.pq_sig = sig
     return pub
 
 
@@ -56,15 +67,17 @@ def _authorized_mailbox(request: Request, mid_s: str) -> bytes:
 class BindIn(BaseModel):
     token: str = Field(min_length=64, max_length=64)
     pubkey: str = Field(min_length=43, max_length=43)
+    pq_pubkey: str = Field(min_length=2600, max_length=2610)        # ML-DSA-65 public key, 1952 bytes
 
 
 @router.post("/admin/bind", status_code=204)
 async def bind(body: BindIn, request: Request):
     st = request.app.state
     pub = b64d(body.pubkey, 32)
+    pqk = b64d(body.pq_pubkey, pq.PK_LEN)
     if st.store.has_superadmin() or not st.bind.consume(body.token):
         raise HTTPException(404)
-    if not st.store.bind_superadmin(pub):
+    if not st.store.bind_superadmin(pub, pqk):
         raise HTTPException(404)
     log.info("superadmin bound")
     return Response(status_code=204)
@@ -84,7 +97,7 @@ async def put_user(pubkey: str, body: RoleIn, request: Request, _: bytes = Depen
     pub = b64d(pubkey, 32)
     if not request.app.state.store.add_user(pub, body.role):
         raise HTTPException(409)
-    request.app.state.store.log_admin("add_user", pub, b64d(request.headers["x-sig"], 64))
+    request.app.state.store.log_admin("add_user", pub, b64d(request.headers["x-sig"], 64), request.state.pq_sig)
     log.info("user added or role changed")
     return Response(status_code=204)
 
@@ -94,36 +107,41 @@ async def delete_user(pubkey: str, request: Request, _: bytes = Depends(superadm
     pub = b64d(pubkey, 32)
     if not request.app.state.store.delete_user(pub):
         raise HTTPException(404)
-    request.app.state.store.log_admin("remove_user", pub, b64d(request.headers["x-sig"], 64))
+    request.app.state.store.log_admin("remove_user", pub, b64d(request.headers["x-sig"], 64), request.state.pq_sig)
     log.info("user removed")
     return Response(status_code=204)
 
 
 class RotateIn(BaseModel):
     new_pubkey: str = Field(min_length=43, max_length=43)
-    proof: str = Field(min_length=86, max_length=86)        # signature BY THE NEW KEY: proves it is held, not just typed in
+    proof: str = Field(min_length=86, max_length=86)        # Ed25519 signature BY THE NEW KEY: proves it is held, not just typed in
+    new_pq_pubkey: str = Field(min_length=2600, max_length=2610)
+    pq_proof: str = Field(min_length=4000, max_length=4500)  # ML-DSA signature by the new ML-DSA key
 
 
 @router.post("/admin/rotate-key", status_code=204)
 async def rotate_key(body: RotateIn, request: Request, old: bytes = Depends(superadmin)):
     """Change of the administrator's key: signed by the old key (request signature) and proven by the new one."""
     new = b64d(body.new_pubkey, 32)
+    new_pq = b64d(body.new_pq_pubkey, pq.PK_LEN)
     if new == old:
         raise HTTPException(409)
     try:
         VerifyKey(new).verify(b"NOC1-ROTATE\n" + old + new, b64d(body.proof, 64))
     except BadSignatureError:
         raise HTTPException(400, "bad proof")
-    if not request.app.state.store.rotate_superadmin(old, new):
+    if not pq.verify(new_pq, b"NOC1-ROTATE-PQ\n" + old + new + new_pq, b64d_max(body.pq_proof, pq.SIG_MAX)):
+        raise HTTPException(400, "bad pq proof")
+    if not request.app.state.store.rotate_superadmin(old, new, new_pq):
         raise HTTPException(409)
-    request.app.state.store.log_admin("rotate_key", new, b64d(request.headers["x-sig"], 64))
+    request.app.state.store.log_admin("rotate_key", new, b64d(request.headers["x-sig"], 64), request.state.pq_sig)
     log.info("administrator key changed")
     return Response(status_code=204)
 
 
 @router.get("/admin/log")
 async def admin_log(request: Request, _: bytes = Depends(superadmin)):
-    return [{"action": a, "target": b64e(t), "sig": b64e(g)} for a, t, g in request.app.state.store.admin_log()]
+    return [{"action": a, "target": b64e(t), "sig": b64e(g), "pq_sig": b64e(q) if q else None} for a, t, g, q in request.app.state.store.admin_log()]
 
 
 # ---------------------------------------------------------------- prekeys

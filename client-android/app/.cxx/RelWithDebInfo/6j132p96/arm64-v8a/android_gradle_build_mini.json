@@ -1,0 +1,74 @@
+{
+  "buildFiles": [
+    "/home/user/noc_massanger/client-android/app/src/main/cpp/CMakeLists.txt",
+    "/home/user/noc_massanger/third_party/liboqs/CMakeLists.txt",
+    "/home/user/noc_massanger/third_party/liboqs/src/CMakeLists.txt",
+    "/home/user/noc_massanger/third_party/liboqs/src/common/CMakeLists.txt",
+    "/home/user/noc_massanger/third_party/liboqs/src/common/sha3/xkcp_low/CMakeLists.txt",
+    "/home/user/noc_massanger/third_party/liboqs/src/sig/ml_dsa/CMakeLists.txt"
+  ],
+  "cleanCommandsComponents": [
+    [
+      "/opt/android-sdk/cmake/3.22.1/bin/ninja",
+      "-C",
+      "/home/user/noc_massanger/client-android/app/.cxx/RelWithDebInfo/6j132p96/arm64-v8a",
+      "clean"
+    ]
+  ],
+  "buildTargetsCommandComponents": [
+    "/opt/android-sdk/cmake/3.22.1/bin/ninja",
+    "-C",
+    "/home/user/noc_massanger/client-android/app/.cxx/RelWithDebInfo/6j132p96/arm64-v8a",
+    "{LIST_OF_TARGETS_TO_BUILD}"
+  ],
+  "libraries": {
+    "uninstall::@e0a07cb4fe84454e3769": {
+      "artifactName": "uninstall",
+      "abi": "arm64-v8a",
+      "runtimeFiles": []
+    },
+    "xkcp_low_keccakp_1600times4_serial::@3032a38d61fb21486367": {
+      "artifactName": "xkcp_low_keccakp_1600times4_serial",
+      "abi": "arm64-v8a",
+      "runtimeFiles": []
+    },
+    "common::@4afaa177c8b843d88b99": {
+      "artifactName": "common",
+      "abi": "arm64-v8a",
+      "runtimeFiles": []
+    },
+    "oqs-internal::@a3574687576518cb75fb": {
+      "artifactName": "oqs-internal",
+      "abi": "arm64-v8a",
+      "output": "/home/user/noc_massanger/client-android/app/.cxx/RelWithDebInfo/6j132p96/arm64-v8a/liboqs/lib/liboqs-internal.a",
+      "runtimeFiles": []
+    },
+    "internal::@4afaa177c8b843d88b99": {
+      "artifactName": "internal",
+      "abi": "arm64-v8a",
+      "runtimeFiles": []
+    },
+    "ml_dsa_65_ref::@42de8a2d71fad246db4d": {
+      "artifactName": "ml_dsa_65_ref",
+      "abi": "arm64-v8a",
+      "runtimeFiles": []
+    },
+    "nocoqs::@6890427a1f51a3e7e1df": {
+      "artifactName": "nocoqs",
+      "abi": "arm64-v8a",
+      "output": "/home/user/noc_massanger/client-android/app/build/intermediates/cxx/RelWithDebInfo/6j132p96/obj/arm64-v8a/libnocoqs.so",
+      "runtimeFiles": []
+    },
+    "oqs::@a3574687576518cb75fb": {
+      "artifactName": "oqs",
+      "abi": "arm64-v8a",
+      "output": "/home/user/noc_massanger/client-android/app/.cxx/RelWithDebInfo/6j132p96/arm64-v8a/liboqs/lib/liboqs.a",
+      "runtimeFiles": []
+    },
+    "xkcp_low_keccakp_1600_plain64::@3032a38d61fb21486367": {
+      "artifactName": "xkcp_low_keccakp_1600_plain64",
+      "abi": "arm64-v8a",
+      "runtimeFiles": []
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+	"backtraceGraph" : 
+	{
+		"commands" : [],
+		"files" : [],
+		"nodes" : []
+	},
+	"installers" : [],
+	"paths" : 
+	{
+		"build" : "liboqs/src/common",
+		"source" : "/home/user/noc_massanger/third_party/liboqs/src/common"
+	}
+}

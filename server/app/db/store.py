@@ -30,6 +30,9 @@ CREATE TABLE IF NOT EXISTS one_time_prekeys(
   owner BLOB NOT NULL REFERENCES devices(pubkey) ON DELETE CASCADE,
   data BLOB NOT NULL);
 CREATE INDEX IF NOT EXISTS otp_owner ON one_time_prekeys(owner);
+CREATE TABLE IF NOT EXISTS admin_pq(
+  pubkey BLOB PRIMARY KEY REFERENCES devices(pubkey) ON DELETE CASCADE,
+  pq BLOB NOT NULL CHECK(length(pq)=1952));
 CREATE TABLE IF NOT EXISTS admin_log(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   action TEXT NOT NULL CHECK(action IN ('add_user','remove_user','rotate_key')),
@@ -52,6 +55,10 @@ class Store:
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.execute("PRAGMA secure_delete = ON")
         self.conn.executescript(SCHEMA)  # also fails loudly if the key is wrong
+        try:
+            self.conn.execute("ALTER TABLE admin_log ADD COLUMN pq_sig BLOB")      # upgrade from stage 3
+        except Exception:
+            pass
         if path != ":memory:":
             os.chmod(path, 0o600)
 
@@ -68,30 +75,42 @@ class Store:
         with self._lock:
             return self.conn.execute("SELECT 1 FROM devices WHERE role='superadmin'").fetchone() is not None
 
-    def bind_superadmin(self, pub: bytes) -> bool:
+    def bind_superadmin(self, pub: bytes, pq: bytes) -> bool:
+        """The administrator is a PAIR of keys: Ed25519 and ML-DSA-65. Both are registered together, once."""
         with self._tx() as c:
             if c.execute("SELECT 1 FROM devices WHERE role='superadmin'").fetchone():
                 return False
             c.execute("INSERT OR REPLACE INTO devices(pubkey, role) VALUES(?, 'superadmin')", (pub,))
+            c.execute("INSERT OR REPLACE INTO admin_pq(pubkey, pq) VALUES(?, ?)", (pub, pq))
             return True
 
-    def log_admin(self, action: str, target: bytes, sig: bytes) -> None:
-        """Keeps the administrator's own signature next to each action (no time, no address: minimum metadata)."""
+    def admin_pq_key(self, pub: bytes):
+        with self._lock:
+            r = self.conn.execute("SELECT pq FROM admin_pq WHERE pubkey=?", (pub,)).fetchone()
+        return bytes(r[0]) if r else None
+
+    def superadmin_without_pq(self) -> bool:
+        with self._lock:
+            return self.conn.execute("SELECT 1 FROM devices d WHERE d.role='superadmin' AND NOT EXISTS (SELECT 1 FROM admin_pq a WHERE a.pubkey=d.pubkey)").fetchone() is not None
+
+    def log_admin(self, action: str, target: bytes, sig: bytes, pq_sig: bytes = None) -> None:
+        """Keeps the administrator's own signatures (Ed25519 and ML-DSA) next to each action (no time, no address: minimum metadata)."""
         with self._tx() as c:
-            c.execute("INSERT INTO admin_log(action, target, sig) VALUES(?, ?, ?)", (action, target, sig))
+            c.execute("INSERT INTO admin_log(action, target, sig, pq_sig) VALUES(?, ?, ?, ?)", (action, target, sig, pq_sig))
 
     def admin_log(self, limit: int = 200):
         with self._lock:
-            rows = self.conn.execute("SELECT action, target, sig FROM admin_log ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
-        return [(a, bytes(t), bytes(g)) for a, t, g in rows]
+            rows = self.conn.execute("SELECT action, target, sig, pq_sig FROM admin_log ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        return [(a, bytes(t), bytes(g), bytes(q) if q else None) for a, t, g, q in rows]
 
-    def rotate_superadmin(self, old: bytes, new: bytes) -> bool:
+    def rotate_superadmin(self, old: bytes, new: bytes, new_pq: bytes) -> bool:
         """Replaces the single superadmin key. The record is replaced atomically; the old key stops working at once."""
         with self._tx() as c:
             if not c.execute("SELECT 1 FROM devices WHERE pubkey=? AND role='superadmin'", (old,)).fetchone():
                 return False
-            c.execute("DELETE FROM devices WHERE pubkey=?", (old,))
+            c.execute("DELETE FROM devices WHERE pubkey=?", (old,))                 # cascades: the old ML-DSA key goes too
             c.execute("INSERT OR REPLACE INTO devices(pubkey, role) VALUES(?, 'superadmin')", (new,))
+            c.execute("INSERT OR REPLACE INTO admin_pq(pubkey, pq) VALUES(?, ?)", (new, new_pq))
             return True
 
     def reset_superadmin(self):

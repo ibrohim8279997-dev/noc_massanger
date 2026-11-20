@@ -14,6 +14,8 @@ tasks.configureEach { if (name.startsWith("merge") && name.endsWith("JniLibFolde
 android {
     namespace = "noc.app"
     compileSdk = 35
+    ndkVersion = "27.2.12479018"
+    externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
     defaultConfig {
         applicationId = "noc.messenger"
         minSdk = 30; targetSdk = 35; versionCode = 1; versionName = "0.1"

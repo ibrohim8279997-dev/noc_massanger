@@ -10,12 +10,12 @@ import kotlin.test.*
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class E2eTest {
     private var server: ServerProc? = null
-    private lateinit var admin: noc.crypto.SeedSigner
+    private lateinit var admin: noc.crypto.HybridSigner
 
     @BeforeAll fun up() { assumeTrue(ServerProc.available(), "server/.venv not found"); server = ServerProc.start() }
     @AfterAll fun down() { server?.close() }
 
-    private fun fresh(): Triple<Phone, Phone, noc.crypto.SeedSigner> {
+    private fun fresh(): Triple<Phone, Phone, noc.crypto.HybridSigner> {
         // every test uses its own server so tests do not depend on each other
         val s = ServerProc.start(); extra.add(s)
         val a = Phone(s.baseUrl); val b = Phone(s.baseUrl)
@@ -78,10 +78,13 @@ class E2eTest {
         val s = ServerProc.start(); extra.add(s)
         val a = Phone(s.baseUrl); val adm = setupAdmin(s, a)
         val api = ServerApi(s.baseUrl, Transport.direct())
-        val newAdmin = noc.crypto.SeedSigner(noc.crypto.SeedSigner.newSeed())
+        val newAdmin = noc.crypto.HybridSigner.generate()
         api.rotateAdminKey(adm, newAdmin)
         assertEquals(401, assertFailsWith<ApiException> { api.listUsers(adm) }.code)
         assertTrue(api.listUsers(newAdmin).any { it.second == "superadmin" && it.first.contentEquals(newAdmin.publicKey) })
+        // the old ML-DSA key alone is dead as well: a request signed with the OLD ML-DSA key but the NEW Ed25519 key is refused
+        val mixed = noc.crypto.HybridSigner(newAdmin.ed, adm.pqPublic, adm.pqSecretCopy())
+        assertEquals(401, assertFailsWith<ApiException> { api.listUsers(mixed) }.code)
         val log = api.adminLog(newAdmin)
         assertEquals("rotate_key", log.first().first); assertEquals(64, log.first().third.size)
         assertEquals("add_user", log.last().first)

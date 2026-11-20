@@ -8,4 +8,4 @@ dependencies {
     testRuntimeOnly("org.signal:libsignal-server:0.86.5")
     testImplementation(kotlin("test"))
 }
-tasks.test { useJUnitPlatform(); (project.findProperty("vectorOut") as String?)?.let { systemProperty("vector.out", it) } }
+tasks.test { systemProperty("noc.oqs.jni", rootDir.parentFile.resolve("third_party/jni-host/libnocoqs.so").path); (project.findProperty("mldsaVector") as String?)?.let { systemProperty("mldsa.vector.out", it) }; useJUnitPlatform(); (project.findProperty("vectorOut") as String?)?.let { systemProperty("vector.out", it) } }

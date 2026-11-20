@@ -1,0 +1,6 @@
+/home/user/noc_massanger/client-android/app/src/main/cpp/CMakeLists.txt
+/home/user/noc_massanger/third_party/liboqs/CMakeLists.txt
+/home/user/noc_massanger/third_party/liboqs/src/CMakeLists.txt
+/home/user/noc_massanger/third_party/liboqs/src/common/CMakeLists.txt
+/home/user/noc_massanger/third_party/liboqs/src/common/sha3/xkcp_low/CMakeLists.txt
+/home/user/noc_massanger/third_party/liboqs/src/sig/ml_dsa/CMakeLists.txt

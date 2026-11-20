@@ -15,3 +15,4 @@ client-android/**/build/
 *.jks
 *.keystore
 !dist/noc-release.apk
+third_party/

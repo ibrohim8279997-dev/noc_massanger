@@ -1,0 +1,241 @@
+{
+	"configurations" : 
+	[
+		{
+			"directories" : 
+			[
+				{
+					"build" : ".",
+					"childIndexes" : 
+					[
+						1
+					],
+					"hasInstallRule" : true,
+					"jsonFile" : "directory-.-RelWithDebInfo-f5ebdc15457944623624.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.6.0"
+					},
+					"projectIndex" : 0,
+					"source" : ".",
+					"targetIndexes" : 
+					[
+						3
+					]
+				},
+				{
+					"build" : "liboqs",
+					"childIndexes" : 
+					[
+						2
+					],
+					"hasInstallRule" : true,
+					"jsonFile" : "directory-liboqs-RelWithDebInfo-b6a6e0007d6c36a99fcc.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.15"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 1,
+					"source" : "/home/user/noc_massanger/third_party/liboqs",
+					"targetIndexes" : 
+					[
+						6
+					]
+				},
+				{
+					"build" : "liboqs/src",
+					"childIndexes" : 
+					[
+						3,
+						5
+					],
+					"hasInstallRule" : true,
+					"jsonFile" : "directory-liboqs.src-RelWithDebInfo-3d157529b9763f0f720f.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.15"
+					},
+					"parentIndex" : 1,
+					"projectIndex" : 1,
+					"source" : "/home/user/noc_massanger/third_party/liboqs/src",
+					"targetIndexes" : 
+					[
+						4,
+						5
+					]
+				},
+				{
+					"build" : "liboqs/src/common",
+					"childIndexes" : 
+					[
+						4
+					],
+					"jsonFile" : "directory-liboqs.src.common-RelWithDebInfo-5b30bcda5c6d4dbb635c.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.15"
+					},
+					"parentIndex" : 2,
+					"projectIndex" : 1,
+					"source" : "/home/user/noc_massanger/third_party/liboqs/src/common",
+					"targetIndexes" : 
+					[
+						0,
+						1
+					]
+				},
+				{
+					"build" : "liboqs/src/common/sha3/xkcp_low",
+					"jsonFile" : "directory-liboqs.src.common.sha3.xkcp_low-RelWithDebInfo-0909a3b5ef6d465fc6b5.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.15"
+					},
+					"parentIndex" : 3,
+					"projectIndex" : 1,
+					"source" : "/home/user/noc_massanger/third_party/liboqs/src/common/sha3/xkcp_low",
+					"targetIndexes" : 
+					[
+						7,
+						8
+					]
+				},
+				{
+					"build" : "liboqs/src/sig/ml_dsa",
+					"jsonFile" : "directory-liboqs.src.sig.ml_dsa-RelWithDebInfo-1cbb59c509c0c8b373ae.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.15"
+					},
+					"parentIndex" : 2,
+					"projectIndex" : 1,
+					"source" : "/home/user/noc_massanger/third_party/liboqs/src/sig/ml_dsa",
+					"targetIndexes" : 
+					[
+						2
+					]
+				}
+			],
+			"name" : "RelWithDebInfo",
+			"projects" : 
+			[
+				{
+					"childIndexes" : 
+					[
+						1
+					],
+					"directoryIndexes" : 
+					[
+						0
+					],
+					"name" : "nocoqs",
+					"targetIndexes" : 
+					[
+						3
+					]
+				},
+				{
+					"directoryIndexes" : 
+					[
+						1,
+						2,
+						3,
+						4,
+						5
+					],
+					"name" : "liboqs",
+					"parentIndex" : 0,
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2,
+						4,
+						5,
+						6,
+						7,
+						8
+					]
+				}
+			],
+			"targets" : 
+			[
+				{
+					"directoryIndex" : 3,
+					"id" : "common::@4afaa177c8b843d88b99",
+					"jsonFile" : "target-common-RelWithDebInfo-18df8c673564921d2025.json",
+					"name" : "common",
+					"projectIndex" : 1
+				},
+				{
+					"directoryIndex" : 3,
+					"id" : "internal::@4afaa177c8b843d88b99",
+					"jsonFile" : "target-internal-RelWithDebInfo-7e5bef47767d3bff65f3.json",
+					"name" : "internal",
+					"projectIndex" : 1
+				},
+				{
+					"directoryIndex" : 5,
+					"id" : "ml_dsa_65_ref::@42de8a2d71fad246db4d",
+					"jsonFile" : "target-ml_dsa_65_ref-RelWithDebInfo-17559963b3e3665588c9.json",
+					"name" : "ml_dsa_65_ref",
+					"projectIndex" : 1
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "nocoqs::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-nocoqs-RelWithDebInfo-beec310db371444d61c6.json",
+					"name" : "nocoqs",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 2,
+					"id" : "oqs::@a3574687576518cb75fb",
+					"jsonFile" : "target-oqs-RelWithDebInfo-72b0da29a2a9d5aa9301.json",
+					"name" : "oqs",
+					"projectIndex" : 1
+				},
+				{
+					"directoryIndex" : 2,
+					"id" : "oqs-internal::@a3574687576518cb75fb",
+					"jsonFile" : "target-oqs-internal-RelWithDebInfo-dce017dacdfe4a9c5a07.json",
+					"name" : "oqs-internal",
+					"projectIndex" : 1
+				},
+				{
+					"directoryIndex" : 1,
+					"id" : "uninstall::@e0a07cb4fe84454e3769",
+					"jsonFile" : "target-uninstall-RelWithDebInfo-eb37ec8e28072e69faa9.json",
+					"name" : "uninstall",
+					"projectIndex" : 1
+				},
+				{
+					"directoryIndex" : 4,
+					"id" : "xkcp_low_keccakp_1600_plain64::@3032a38d61fb21486367",
+					"jsonFile" : "target-xkcp_low_keccakp_1600_plain64-RelWithDebInfo-9466eeb3c46b733ea6c3.json",
+					"name" : "xkcp_low_keccakp_1600_plain64",
+					"projectIndex" : 1
+				},
+				{
+					"directoryIndex" : 4,
+					"id" : "xkcp_low_keccakp_1600times4_serial::@3032a38d61fb21486367",
+					"jsonFile" : "target-xkcp_low_keccakp_1600times4_serial-RelWithDebInfo-4fb259eef38f9fc2e4af.json",
+					"name" : "xkcp_low_keccakp_1600times4_serial",
+					"projectIndex" : 1
+				}
+			]
+		}
+	],
+	"kind" : "codemodel",
+	"paths" : 
+	{
+		"build" : "/home/user/noc_massanger/client-android/app/.cxx/RelWithDebInfo/6j132p96/arm64-v8a",
+		"source" : "/home/user/noc_massanger/client-android/app/src/main/cpp"
+	},
+	"version" : 
+	{
+		"major" : 2,
+		"minor" : 3
+	}
+}

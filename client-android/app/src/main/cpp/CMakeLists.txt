@@ -1,0 +1,13 @@
+cmake_minimum_required(VERSION 3.22)
+project(nocoqs C)
+# liboqs is taken from third_party/ (tools/fetch-liboqs.sh pins the exact commit) and reduced to ML-DSA-65 only
+set(OQS_BUILD_ONLY_LIB ON CACHE BOOL "" FORCE)
+set(OQS_USE_OPENSSL OFF CACHE BOOL "" FORCE)
+set(OQS_DIST_BUILD ON CACHE BOOL "" FORCE)
+set(OQS_MINIMAL_BUILD "SIG_ml_dsa_65" CACHE STRING "" FORCE)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../../../../third_party/liboqs ${CMAKE_BINARY_DIR}/liboqs EXCLUDE_FROM_ALL)
+add_library(nocoqs SHARED ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../native/nocoqs/oqs_jni.c)
+target_link_libraries(nocoqs PRIVATE oqs)
+target_include_directories(nocoqs PRIVATE ${CMAKE_BINARY_DIR}/liboqs/include)

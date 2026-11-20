@@ -38,8 +38,8 @@ def test_real_server_output_has_no_ip_keys_or_tokens(tmp_path):
                 break
         token = re.search(r"[0-9a-f]{64}", buf).group(0)
         base = f"http://127.0.0.1:{port}"
-        admin, user = Dev(), Dev()
-        assert httpx.post(base + "/v1/admin/bind", json={"token": token, "pubkey": admin.pub_s}).status_code == 204
+        admin, user = Dev(admin=True), Dev()
+        assert httpx.post(base + "/v1/admin/bind", json={"token": token, "pubkey": admin.pub_s, "pq_pubkey": b64(admin.pq[0])}).status_code == 204
         body = b'{"role":"user"}'
         path = f"/v1/admin/users/{user.pub_s}"
         h = admin.headers("PUT", path, body); h["content-type"] = "application/json"
@@ -63,8 +63,9 @@ def test_real_server_output_has_no_ip_keys_or_tokens(tmp_path):
         p.terminate()
         out = buf + p.communicate(timeout=10)[0]
     assert "127.0.0.1" not in out.replace("Uvicorn running on http://127.0.0.1", "")
-    for secret in (admin.pub_s, user.pub_s, mid, tok):
-        assert secret not in out
+    for secret in (admin.pub_s, user.pub_s, mid, tok, b64(admin.pq[0])[:40], b64(admin.pq[0])[-40:]):
+        assert secret not in out                                                   # no keys, including the ML-DSA public key, anywhere in the output
+    assert 'x-pq-sig' not in out.lower()
     assert out.count(token) == 1                    # token is shown once, on the console only
     # also confirm nothing was written to disk logs
     assert not [f for f in os.listdir(tmp_path) if f.endswith(".log")]

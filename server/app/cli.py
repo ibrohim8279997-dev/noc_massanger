@@ -35,6 +35,11 @@ def main():
     bind = BindState()
     probe = Store(settings.db_path, settings.db_key_hex, ENVELOPE_SIZE)
     needs_admin = not probe.has_superadmin()
+    if probe.superadmin_without_pq():
+        print('WARNING: the administrator has no ML-DSA key (created before this version). Run: python -m app.cli reset-superadmin, then bind again.', flush=True)
+    from . import pq
+    if not pq.available():
+        print('ERROR: liboqs (ML-DSA-65) not found. Run tools/build-liboqs-host.sh (administration is refused without it).', flush=True)
     probe.close()
     if needs_admin:
         # printed to the console of this phone only, never to a logger or file

@@ -165,7 +165,7 @@ private fun clock(ts: Long): String = DateFormat.getTimeInstance(DateFormat.SHOR
                 Text(stringResource(R.string.nav_contacts), color = pal.text, fontSize = 22.sp, fontWeight = FontWeight.SemiBold) }
             PrimaryButton(stringResource(R.string.add_contact), { a.ui.screen = Screen.Meet })
             if (contacts.isNotEmpty()) { Spacer(Modifier.height(8.dp)); SecondaryButton(stringResource(R.string.group_new), { a.ui.screen = Screen.GroupNew }) }
-            if (a.app.vault.has("admin")) { Spacer(Modifier.height(8.dp)); SecondaryButton(stringResource(R.string.add_user), { a.ui.screen = Screen.Admin }) }
+            if (a.hasAdmin()) { Spacer(Modifier.height(8.dp)); SecondaryButton(stringResource(R.string.add_user), { a.ui.screen = Screen.Admin }) }
             Spacer(Modifier.height(8.dp))
             if (contacts.isEmpty()) Text(stringResource(R.string.chats_empty), color = pal.sub, modifier = Modifier.padding(top = 16.dp))
             LazyColumn { items(contacts) { c ->
@@ -420,7 +420,7 @@ private fun startRecording(ctx: android.content.Context): Pair<MediaRecorder, Fi
                     Text(stringResource(R.string.mesh_note), color = pal.sub, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
                     if (on) a.mesh?.let { Text(stringResource(R.string.mesh_status, it.neighbours, it.held), color = pal.text, modifier = Modifier.padding(top = 8.dp)) }
                 }
-                if (a.app.vault.has("admin")) { section(R.string.section_admin); SecondaryButton(stringResource(R.string.admin_open), { a.ui.screen = Screen.Admin }) }
+                if (a.hasAdmin()) { section(R.string.section_admin); SecondaryButton(stringResource(R.string.admin_open), { a.ui.screen = Screen.Admin }) }
                 SecondaryButton(stringResource(R.string.settings_wipe), { wipe = true })
                 Text(stringResource(R.string.about) + " · " + stringResource(R.string.version, BuildConfig.VERSION_NAME), color = pal.sub, fontSize = 12.sp, modifier = Modifier.padding(bottom = 12.dp))
             }
@@ -444,10 +444,10 @@ private fun startRecording(ctx: android.content.Context): Pair<MediaRecorder, Fi
     Page(stringResource(R.string.admin_title), onBack = { a.ui.screen = Screen.Contacts }) { Scrolling {
         PrimaryButton(stringResource(R.string.admin_add), { scan.launch(ScanOptions().setOrientationLocked(false).setBeepEnabled(false)) })
         SecondaryButton(stringResource(R.string.admin_users), { a.withAdmin { s -> users = a.app.messenger!!.api.listUsers(s) } })
-        SecondaryButton(stringResource(R.string.admin_rotate), { a.withAdmin { old ->
-            val seed = noc.crypto.SeedSigner.newSeed(); val fresh = noc.crypto.SeedSigner(seed)
-            a.app.messenger!!.api.rotateAdminKey(old, fresh)
-            a.app.vault.store("admin", "noc_admin", seed); seed.fill(0); info = R.string.admin_rotated
+        SecondaryButton(stringResource(R.string.admin_rotate), { a.withAdminRotation { old, g, fresh ->
+            // the new keys are already stored; they become current only after the server accepted both of them
+            try { a.app.messenger!!.api.rotateAdminKey(old, fresh); a.adoptAdminKeys(g); info = R.string.admin_rotated }
+            catch (e: Exception) { a.dropAdminKeys(g); throw e }
         } })
         info?.let { Text(stringResource(it), color = pal.ok) }
         users.forEach { (k, role) ->

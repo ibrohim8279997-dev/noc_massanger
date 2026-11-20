@@ -1,6 +1,7 @@
 package noc.client
 
 import noc.crypto.DeviceAuth
+import noc.crypto.HybridSigner
 import noc.crypto.RequestSigner
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
@@ -37,13 +38,17 @@ class ServerApi(private val base: String, private val http: OkHttpClient) : Exch
     }
     private fun j(vararg p: Pair<String, Any?>) = JSONObject(p.toMap()).toString().toByteArray()
 
-    fun bindSuperadmin(token: String, pub: ByteArray) { call(null, "POST", "/v1/admin/bind", j("token" to token, "pubkey" to b64(pub)), json = true) }
+    fun bindSuperadmin(token: String, admin: HybridSigner) {
+        call(null, "POST", "/v1/admin/bind", j("token" to token, "pubkey" to b64(admin.publicKey), "pq_pubkey" to b64(admin.pqPublic)), json = true)
+    }
     fun addUser(admin: RequestSigner, pub: ByteArray) { call(admin, "PUT", "/v1/admin/users/${b64(pub)}", j("role" to "user"), json = true) }
     fun removeUser(admin: RequestSigner, pub: ByteArray) { call(admin, "DELETE", "/v1/admin/users/${b64(pub)}") }
     /** Hands the administrator role to a new key. The new key signs a proof so the server knows it is really held. */
-    fun rotateAdminKey(old: RequestSigner, new: RequestSigner) {
+    fun rotateAdminKey(old: HybridSigner, new: HybridSigner) {
         val proof = new.sign("NOC1-ROTATE\n".toByteArray() + old.publicKey + new.publicKey)
-        call(old, "POST", "/v1/admin/rotate-key", j("new_pubkey" to b64(new.publicKey), "proof" to b64(proof)), json = true)
+        val pqProof = new.pqSign("NOC1-ROTATE-PQ\n".toByteArray() + old.publicKey + new.publicKey + new.pqPublic)
+        call(old, "POST", "/v1/admin/rotate-key", j("new_pubkey" to b64(new.publicKey), "proof" to b64(proof),
+            "new_pq_pubkey" to b64(new.pqPublic), "pq_proof" to b64(pqProof)), json = true)
     }
     fun adminLog(admin: RequestSigner): List<Triple<String, ByteArray, ByteArray>> {
         val a = JSONArray(String(call(admin, "GET", "/v1/admin/log")))

@@ -1,6 +1,7 @@
 package noc.client
 
 import noc.crypto.MemoryKv
+import noc.crypto.HybridSigner
 import noc.crypto.SeedSigner
 import java.io.File
 import java.net.ServerSocket
@@ -92,10 +93,10 @@ fun waitFor(ms: Long = 5000, cond: () -> Boolean) {
 }
 
 /** admin binds, then registers the given phones as users */
-fun setupAdmin(server: ServerProc, vararg phones: Phone): SeedSigner {
-    val admin = SeedSigner(SeedSigner.newSeed())
+fun setupAdmin(server: ServerProc, vararg phones: Phone): HybridSigner {
+    val admin = HybridSigner.generate()
     val api = ServerApi(server.baseUrl, Transport.direct())
-    api.bindSuperadmin(server.bindToken, admin.publicKey)
+    api.bindSuperadmin(server.bindToken, admin)
     phones.forEach { api.addUser(admin, it.key) }
     return admin
 }

@@ -48,6 +48,10 @@ class KeyVault(ctx: Context) {
 
     fun forget(slot: String) { prefs.edit().remove(slot).apply() }
 
+    // small non-secret pointers (e.g. which generation of the administrator keys is current)
+    fun meta(name: String): String? = prefs.getString("meta_$name", null)
+    fun setMeta(name: String, value: String?) { prefs.edit().apply { if (value == null) remove("meta_$name") else putString("meta_$name", value) }.apply() }
+
     // plain, non-secret integrity pin
     fun pinValue(name: String, value: String): Boolean {
         val old = prefs.getString("pin_$name", null)

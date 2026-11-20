@@ -11,7 +11,9 @@ import time
 import httpx
 import pytest
 
-from .conftest import Dev
+from app import pq
+
+from .conftest import Dev, b64
 
 pytestmark = pytest.mark.skipif(os.geteuid() != 0 or not shutil.which("setpriv"), reason="needs root and setpriv")
 SERVER_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -104,11 +106,11 @@ def test_binding_token_exists_only_on_the_console_and_a_lost_admin_needs_physica
     d, key = svc_dir
     db = str(d / "noc.db")
     s = Srv(db, str(key), run_as="noc")
-    admin = Dev()
+    admin = Dev(admin=True)
     try:
         assert s.token and s.out.count(s.token) == 1                                    # shown once, on this console
-        assert httpx.post(s.base + "/v1/admin/bind", json={"token": s.token, "pubkey": admin.pub_s}).status_code == 204
-        assert httpx.post(s.base + "/v1/admin/bind", json={"token": s.token, "pubkey": Dev().pub_s}).status_code == 404   # burnt
+        assert httpx.post(s.base + "/v1/admin/bind", json={"token": s.token, "pubkey": admin.pub_s, "pq_pubkey": b64(admin.pq[0])}).status_code == 204
+        assert httpx.post(s.base + "/v1/admin/bind", json={"token": s.token, "pubkey": Dev(admin=True).pub_s, "pq_pubkey": b64(pq.keypair()[0])}).status_code == 404   # burnt
     finally:
         s.stop()
     assert s.token.encode() not in open(db, "rb").read()                                # never written to disk
@@ -116,7 +118,7 @@ def test_binding_token_exists_only_on_the_console_and_a_lost_admin_needs_physica
     s2 = Srv(db, str(key), run_as="noc")
     try:
         assert s2.token is None
-        assert httpx.post(s2.base + "/v1/admin/bind", json={"token": "0" * 64, "pubkey": Dev().pub_s}).status_code == 404
+        assert httpx.post(s2.base + "/v1/admin/bind", json={"token": "0" * 64, "pubkey": Dev(admin=True).pub_s, "pq_pubkey": b64(pq.keypair()[0])}).status_code == 404
     finally:
         s2.stop()
     # loss of the admin device: the record is removed by hand ON the phone, then a restart issues a fresh token
@@ -127,8 +129,8 @@ def test_binding_token_exists_only_on_the_console_and_a_lost_admin_needs_physica
     s3 = Srv(db, str(key), run_as="noc")
     try:
         assert s3.token and s3.token != s.token
-        new_admin = Dev()
-        assert httpx.post(s3.base + "/v1/admin/bind", json={"token": s3.token, "pubkey": new_admin.pub_s}).status_code == 204
+        new_admin = Dev(admin=True)
+        assert httpx.post(s3.base + "/v1/admin/bind", json={"token": s3.token, "pubkey": new_admin.pub_s, "pq_pubkey": b64(new_admin.pq[0])}).status_code == 204
         h = admin.headers("GET", "/v1/admin/users")                                      # the lost device's key is dead
         assert httpx.get(s3.base + "/v1/admin/users", headers=h).status_code == 401
     finally:

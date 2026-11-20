@@ -86,11 +86,46 @@ class MainActivity : AppCompatActivity() {
         if (app.messenger == null) ui.screen = Screen.Setup else { ui.screen = Screen.Chats; startLoop() }
     }
 
-    fun withAdmin(block: (SeedSigner) -> Unit) = authenticate {
-        val seed = app.vault.load("admin", "noc_admin") ?: error("no admin key")
-        val signer = SeedSigner(seed); seed.fill(0)
+    // ---- administrator keys: Ed25519 + ML-DSA-65, wrapped by Keystore, kept in numbered generations so a failed change can never lock us out
+    fun hasAdmin() = app.vault.meta("adm_gen") != null
+    private fun slot(g: Int, what: String) = "adm_${g}_$what"
+
+    /** Unlocks the current administrator keys (open only right after a fresh authentication). */
+    fun withAdmin(block: (noc.crypto.HybridSigner) -> Unit) = authenticate {
+        val g = app.vault.meta("adm_gen")?.toInt() ?: error("no admin key")
+        val seed = app.vault.load(slot(g, "ed"), "noc_admin") ?: error("no admin key")
+        val sk = app.vault.load(slot(g, "sk"), "noc_admin") ?: error("no ML-DSA key")
+        val pk = app.vault.load(slot(g, "pk"), "noc_admin") ?: error("no ML-DSA public key")
+        val signer = noc.crypto.HybridSigner.from(seed, pk, sk); seed.fill(0); sk.fill(0)
         io { block(signer) }
     }
+
+    /** Key change: inside ONE authentication window load the old keys AND generate and store the new generation; the (slow) network call comes after. */
+    fun withAdminRotation(block: (old: noc.crypto.HybridSigner, g: Int, fresh: noc.crypto.HybridSigner) -> Unit) = authenticate {
+        val g0 = app.vault.meta("adm_gen")?.toInt() ?: error("no admin key")
+        val seed = app.vault.load(slot(g0, "ed"), "noc_admin") ?: error("no admin key")
+        val sk = app.vault.load(slot(g0, "sk"), "noc_admin") ?: error("no ML-DSA key")
+        val pk = app.vault.load(slot(g0, "pk"), "noc_admin") ?: error("no ML-DSA public key")
+        val old = noc.crypto.HybridSigner.from(seed, pk, sk)
+        val (g, fresh) = newAdminKeys()                                   // stored now, not yet current
+        io { block(old, g, fresh) }
+    }
+
+    /** Creates a NEW generation of administrator keys and stores it. Does not make it current: call [adoptAdminKeys] after the server accepted it. */
+    fun newAdminKeys(): Pair<Int, noc.crypto.HybridSigner> {
+        val g = (app.vault.meta("adm_gen")?.toInt() ?: 0) + 1
+        val seed = SeedSigner.newSeed(); val (pk, sk) = noc.crypto.MlDsa65.keyPair()
+        app.vault.store(slot(g, "ed"), "noc_admin", seed); app.vault.store(slot(g, "sk"), "noc_admin", sk); app.vault.store(slot(g, "pk"), "noc_admin", pk)
+        return g to noc.crypto.HybridSigner.from(seed, pk, sk)
+    }
+
+    fun adoptAdminKeys(g: Int) {
+        val old = app.vault.meta("adm_gen")?.toInt()
+        app.vault.setMeta("adm_gen", g.toString())
+        if (old != null) listOf("ed", "sk", "pk").forEach { app.vault.forget(slot(old, it)) }
+    }
+
+    fun dropAdminKeys(g: Int) { listOf("ed", "sk", "pk").forEach { app.vault.forget(slot(g, it)) } }
 
     // ------------------------------------------------------------------ helpers
     // On-screen only, never logged. Message is clipped; bound values are never part of SQLite/libsignal messages.
@@ -118,27 +153,27 @@ class MainActivity : AppCompatActivity() {
     private var retry: Job? = null
 
     fun connectServer(url: String, token: String, onCard: (String) -> Unit) {
-        fun proceed(adminSeed: ByteArray?) = io {
+        fun proceed(gen: Pair<Int, noc.crypto.HybridSigner>?) = io {
+            val admin = gen?.second
             val db = app.db!!; db.setSetting("server", url); app.connect()
             val m = app.messenger!!
             if (app.viaTor && !app.tor.startWithFallback(bridgeLines())) { ui.error = getString(R.string.tor_failed); return@io }   // fail closed
             try {
-                if (adminSeed != null) {
-                    val s = SeedSigner(adminSeed)
-                    m.api.bindSuperadmin(token, s.publicKey); m.api.addUser(s, m.signer.publicKey)
+                if (admin != null) {
+                    m.api.bindSuperadmin(token, admin); m.api.addUser(admin, m.signer.publicKey)
                 }
+                if (gen != null) adoptAdminKeys(gen.first)                                            // only now are the new keys the current ones
                 m.sync(); ui.error = null; ui.registered = true; ui.screen = Screen.Chats; startLoop()
             } catch (e: ApiException) {
-                if (adminSeed != null) app.vault.forget("admin")
-                if (e.code == 401 && adminSeed == null) {
+                if (gen != null) dropAdminKeys(gen.first)
+                if (e.code == 401 && admin == null) {
                     // not registered yet: show the card for the administrator and keep trying by itself
                     ui.error = null; onCard(m.deviceCard()); waitForAdmin(m)
                 } else throw e
             }
         }
         if (token.isBlank()) proceed(null) else authenticate {
-            val seed = SeedSigner.newSeed(); app.vault.store("admin", "noc_admin", seed)   // needs the fresh authentication
-            proceed(seed)
+            proceed(newAdminKeys())   // needs the fresh authentication
         }
     }
 
@@ -259,6 +294,6 @@ class MainActivity : AppCompatActivity() {
 
     fun wipe() {
         lockNow()
-        deleteDatabase("noc.db"); app.vault.forget("master"); app.vault.forget("admin")
+        deleteDatabase("noc.db"); app.vault.forget("master"); app.vault.setMeta("adm_gen", null)
     }
 }
